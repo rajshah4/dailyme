@@ -29,7 +29,7 @@ Rules:
 2. Use the actual story headline, NOT the section header. "AI Twitter Recap" is a section heading, not a story — extract the individual stories within it.
 3. Titles should be concise (under 100 chars). Use the newsletter's own headline when available.
 4. Summaries: 1-2 sentences capturing the key point. Don't repeat the title.
-5. URL: the link to the original article/source. Include whatever URL is available — even redirect/tracking URLs (like substack.com/redirect/...) are fine. We resolve them later. Only omit if there is truly no URL at all.
+5. URL: use the EXACT URL from the newsletter text. Do NOT reconstruct or guess URLs. Copy the URL verbatim, even if it's a redirect/tracking URL (like substack.com/redirect/...). We resolve them later. Only omit if there is truly no URL at all.
 6. Tags: assign 1-2 from this list: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark, opinion
 7. SKIP only these: ads, sponsors, job listings, "share this newsletter", subscribe CTAs, referral promos, social media follow links, unsubscribe footers, author bios.
 8. For single-article newsletters (one long post, not a multi-story digest), return exactly 1 story with tag "long_form".
@@ -46,7 +46,7 @@ Newsletter content:
 {content}
 """
 
-MAX_CONTENT_LENGTH = 30000
+MAX_CONTENT_LENGTH = 80000
 
 # Singleton LLM instance — created once, reused across calls
 _llm = None
@@ -152,10 +152,15 @@ async def extract_stories(
         return None
 
 
+_BLOCK_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "div", "td", "tr", "section", "article"}
+
+
 def _html_to_readable(html: str) -> str:
     """Convert HTML to readable text preserving structure for the LLM.
 
-    Keeps headings, bold text, and links — strips tracking/layout noise.
+    Only extracts "leaf" block elements (those without nested block children)
+    to avoid duplicating content from container elements. Preserves headings,
+    bold text, and links.
     """
     soup = BeautifulSoup(html, "lxml")
 
@@ -163,7 +168,12 @@ def _html_to_readable(html: str) -> str:
         tag.decompose()
 
     lines = []
-    for element in soup.find_all(["h1", "h2", "h3", "h4", "p", "li", "blockquote", "td"]):
+    for element in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "td"]):
+        # Skip container elements that have block-level children —
+        # we'll extract the children individually
+        if element.find(_BLOCK_TAGS):
+            continue
+
         text = element.get_text(" ", strip=True)
         if not text or len(text) < 3:
             continue
@@ -171,7 +181,7 @@ def _html_to_readable(html: str) -> str:
         prefix = ""
         if element.name in ["h1", "h2"]:
             prefix = "## "
-        elif element.name in ["h3", "h4"]:
+        elif element.name in ["h3", "h4", "h5", "h6"]:
             prefix = "### "
         elif element.name == "li":
             prefix = "- "
@@ -184,18 +194,16 @@ def _html_to_readable(html: str) -> str:
             if b_text and len(b_text) > 5:
                 text = text.replace(b_text, f"**{b_text}**", 1)
 
-        # Append links inline
+        # Append links inline — include redirect URLs, we resolve them later
         link_strs = []
         for a in element.find_all("a", href=True):
             href = a["href"]
             if (
                 href.startswith("http")
                 and "unsubscribe" not in href.lower()
-                and "tracking" not in href.lower()
-                and len(href) < 200
             ):
                 link_strs.append(href)
-        link_suffix = f" [{', '.join(link_strs[:2])}]" if link_strs else ""
+        link_suffix = f" [{', '.join(link_strs[:3])}]" if link_strs else ""
 
         lines.append(f"{prefix}{text}{link_suffix}")
 

@@ -117,8 +117,27 @@ def resolve_substack_url(url: str, html: str | None = None) -> str:
         m = re.search(r"https://([a-z0-9-]+)\.substack\.com/p/([a-z0-9][\w-]*)", decoded)
         if m:
             return f"https://{m.group(1)}.substack.com/p/{m.group(2)}"
+        # Opaque UUID redirect — follow HTTP to get real destination
+        resolved = _follow_redirect(url)
+        if resolved:
+            return resolved
 
     return url
+
+
+def _follow_redirect(url: str) -> str | None:
+    """Follow a redirect URL and return the final destination."""
+    import httpx
+
+    try:
+        with httpx.Client(follow_redirects=True, timeout=5.0) as client:
+            resp = client.head(url)
+            final = str(resp.url)
+            if final != url:
+                return final
+    except Exception:
+        pass
+    return None
 
 
 def clean_story_urls(stories: list, html: str, fill_missing: bool = False) -> list:
