@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     digest_timezone: str = "US/Eastern"
     poll_interval_seconds: int = 120
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

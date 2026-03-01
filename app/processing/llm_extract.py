@@ -37,12 +37,7 @@ Rules:
 
 Return a JSON array only, no markdown fences:
 [
-  {
-    "title": "Story headline",
-    "summary": "1-2 sentence summary",
-    "url": "https://...",
-    "tags": ["research"]
-  }
+  {{"title": "Story headline", "summary": "1-2 sentence summary", "url": "https://...", "tags": ["research"]}}
 ]
 
 Newsletter subject: {subject}
@@ -63,10 +58,19 @@ def _get_llm():
 
     Uses LLM.load_from_env() which reads LLM_MODEL, LLM_API_KEY, LLM_BASE_URL
     from the environment — same config pattern as the OpenHands agent itself.
+    Loads .env file first so local dev works without manual exports.
     """
     global _llm
     if _llm is None:
+        import os
+        from dotenv import load_dotenv
         from openhands.sdk import LLM
+
+        load_dotenv()  # ensure .env vars are in os.environ for LLM.load_from_env()
+
+        if not os.getenv("LLM_API_KEY"):
+            return None
+
         try:
             _llm = LLM.load_from_env()
             logger.info("Initialized OpenHands LLM: %s", _llm.model)
@@ -106,14 +110,14 @@ async def extract_stories(
     )
 
     try:
+        from openhands.sdk.llm import Message, TextContent
+
         logger.info("  Calling OpenHands LLM (%s) for story extraction...", llm.model)
         response = llm.completion(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=4000,
+            messages=[Message(role="user", content=[TextContent(text=prompt)])],
         )
 
-        raw = response.choices[0].message.content.strip()
+        raw = response.message.content[0].text.strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
