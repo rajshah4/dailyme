@@ -20,19 +20,20 @@ from app.schemas import ParsedStory
 logger = logging.getLogger(__name__)
 
 EXTRACTION_PROMPT = """\
-You are extracting individual news stories from an email newsletter.
+You are extracting the notable news stories from an email newsletter digest.
 
-Given the newsletter content below, extract each distinct news item as a separate story.
+Extract the **top stories** — the ones a busy AI practitioner would want to see.
+For large digests (like AINews), focus on the 8-15 most significant items, not every link.
 
 Rules:
-1. Each distinct news item is a separate story — if there are 5 announcements, return 5 stories.
-2. Use the actual story headline, NOT the section header. "AI Twitter Recap" is a section, not a story.
+1. Extract distinct NEWS STORIES, not every link or mention in the newsletter.
+2. Use the actual story headline, NOT the section header. "AI Twitter Recap" is a section heading, not a story — extract the individual stories within it.
 3. Titles should be concise (under 100 chars). Use the newsletter's own headline when available.
 4. Summaries: 1-2 sentences capturing the key point. Don't repeat the title.
-5. URL: the link to the original source. Prefer direct URLs over tracking/redirect URLs.
-6. Tags: assign from this list where applicable: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark, opinion
-7. SKIP: ads, sponsor sections, job listings, "share this newsletter", subscribe CTAs, referral promos, unsubscribe footers.
-8. For single-article newsletters (one long post, not a digest), return 1 story with tag "long_form".
+5. URL: the link to the original article/source. Prefer direct URLs over tracking/redirect URLs. Omit if no clear source link.
+6. Tags: assign 1-2 from this list: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark, opinion
+7. SKIP all of these: ads, sponsors, job listings, "share this newsletter", subscribe CTAs, referral promos, social media follow links, unsubscribe footers, author bios.
+8. For single-article newsletters (one long post, not a multi-story digest), return exactly 1 story with tag "long_form".
 
 Return a JSON array only, no markdown fences:
 [
@@ -40,7 +41,7 @@ Return a JSON array only, no markdown fences:
     "title": "Story headline",
     "summary": "1-2 sentence summary",
     "url": "https://...",
-    "tags": ["research", "launch"]
+    "tags": ["research"]
   }
 ]
 
