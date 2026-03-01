@@ -104,9 +104,12 @@ async def run_pipeline():
 
             # Step 3: Parse and segment
             logger.info("[3/5] Parsing: '%s' from %s", email.subject, newsletter.name)
-            html = email.html_body or email.text_body or ""
-            cleaned = clean_html(html) if email.html_body else html
-            stories = segment_newsletter(cleaned, subject=email.subject)
+            raw_html = email.html_body or email.text_body or ""
+            cleaned = clean_html(raw_html) if email.html_body else raw_html
+            stories = segment_newsletter(
+                cleaned, subject=email.subject, from_address=email.from_address,
+                raw_html=raw_html,
+            )
             logger.info("  → Extracted %d stories", len(stories))
 
             if needs_llm_fallback(stories):

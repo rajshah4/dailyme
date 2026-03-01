@@ -16,6 +16,7 @@ import re
 
 from bs4 import BeautifulSoup, Tag
 
+from app.processing.substack import clean_story_urls, is_substack_email
 from app.processing.tagger import detect_tags, is_junk_section
 from app.schemas import ParsedStory
 
@@ -26,24 +27,35 @@ MIN_TITLE_LENGTH = 10
 MAX_TITLE_LENGTH = 200
 
 
-def segment_newsletter(html: str, subject: str | None = None) -> list[ParsedStory]:
+def segment_newsletter(
+    html: str,
+    subject: str | None = None,
+    from_address: str | None = None,
+    raw_html: str | None = None,
+) -> list[ParsedStory]:
     """Segment a newsletter into individual stories.
 
-    Tries structural parsing first, falls back to heuristic, then returns
-    partial results for LLM fallback if needed.
+    Args:
+        html: Cleaned HTML for segmentation
+        subject: Email subject line
+        from_address: Sender email (for platform-specific handling)
+        raw_html: Original raw HTML (for URL extraction — clean_html may strip some)
     """
+    # Use raw HTML for URL extraction, cleaned HTML for segmentation
+    url_html = raw_html or html
+
     # Layer 1: Structural HTML
     stories = _segment_structural(html)
     if len(stories) >= MIN_STORIES_THRESHOLD:
         logger.info("Layer 1 (structural): found %d raw stories", len(stories))
-        stories = _post_process(stories, html, subject)
+        stories = _post_process(stories, html, url_html, subject, from_address)
         return stories
 
     # Layer 2: Heuristic text
     stories = _segment_heuristic(html)
     if len(stories) >= MIN_STORIES_THRESHOLD:
         logger.info("Layer 2 (heuristic): found %d raw stories", len(stories))
-        stories = _post_process(stories, html, subject)
+        stories = _post_process(stories, html, url_html, subject, from_address)
         return stories
 
     # Layer 3: Return what we have — LLM fallback handled by OpenHands agent
@@ -54,7 +66,10 @@ def segment_newsletter(html: str, subject: str | None = None) -> list[ParsedStor
     )
     # For single-article newsletters, return the whole thing as one long_form story
     if subject and len(stories) <= 1:
-        stories = _fallback_single_article(html, subject)
+        stories = _fallback_single_article(html, subject, url_html)
+    # Resolve Substack URLs if applicable
+    if from_address and is_substack_email(from_address):
+        stories = clean_story_urls(stories, url_html, fill_missing=True)
     return stories
 
 
@@ -231,7 +246,11 @@ def _jaccard_words(a: str, b: str) -> float:
 
 
 def _post_process(
-    stories: list[ParsedStory], html: str, subject: str | None
+    stories: list[ParsedStory],
+    html: str,
+    url_html: str,
+    subject: str | None,
+    from_address: str | None = None,
 ) -> list[ParsedStory]:
     """Post-process extracted stories: filter junk, detect tags, handle single-article."""
     # Step 1: Filter junk sections
@@ -250,21 +269,33 @@ def _post_process(
     # Step 2: Detect if this is a single-article newsletter
     if subject and len(clean) >= 2 and _looks_like_single_article(clean, subject):
         logger.info("  Detected single-article newsletter — collapsing to 1 long_form story")
-        return _fallback_single_article(html, subject)
+        result = _fallback_single_article(html, subject, url_html)
+        if from_address and is_substack_email(from_address):
+            result = clean_story_urls(result, url_html, fill_missing=True)
+        return result
 
-    # Step 3: Tag each story
+    # Step 3: Resolve Substack tracking URLs to direct links
+    if from_address and is_substack_email(from_address):
+        clean = clean_story_urls(clean, url_html)
+        logger.info("  Resolved Substack tracking URLs")
+
+    # Step 4: Tag each story
     for story in clean:
         story.tags = detect_tags(story.title, story.summary)
 
-    # Step 4: Renumber positions
+    # Step 5: Renumber positions
     for i, story in enumerate(clean):
         story.position = i
 
     return clean
 
 
-def _fallback_single_article(html: str, subject: str) -> list[ParsedStory]:
+def _fallback_single_article(
+    html: str, subject: str, url_html: str | None = None,
+) -> list[ParsedStory]:
     """For single-article newsletters, return the whole thing as one long_form story."""
+    from app.processing.substack import extract_article_url
+
     soup = BeautifulSoup(html, "lxml")
 
     # Get all text as summary
@@ -274,13 +305,16 @@ def _fallback_single_article(html: str, subject: str) -> list[ParsedStory]:
     if len(text) > 600:
         summary += "..."
 
-    # Find the first meaningful external link
-    url = None
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if _is_story_link(href) and not href.startswith("https://substack.com/@"):
-            url = href
-            break
+    # Try Substack-specific extraction first (from raw HTML for best results)
+    url = extract_article_url(url_html or html)
+
+    # Fallback: find the first meaningful external link
+    if not url:
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if _is_story_link(href) and not href.startswith("https://substack.com/@"):
+                url = href
+                break
 
     tags = ["long_form"]
     tags.extend(detect_tags(subject, summary))
