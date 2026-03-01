@@ -1,9 +1,0 @@
-INFO:     Will watch for changes in these directories: ['/Users/rajiv.shah/Code/dailyme']
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [12564] using WatchFiles
-INFO:     Started server process [12566]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     127.0.0.1:58245 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58247 - "GET /stats HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58250 - "GET / HTTP/1.1" 200 OK
