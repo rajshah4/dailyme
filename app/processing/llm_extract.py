@@ -1,9 +1,12 @@
-"""LLM-powered newsletter story extraction.
+"""LLM-powered newsletter story extraction via OpenHands SDK.
 
-Uses litellm (same backend as OpenHands) to extract stories from newsletters.
-Configure via .env or environment variables:
-  LLM_MODEL    — e.g. "anthropic/claude-sonnet-4-5-20250929"
-  LLM_API_KEY  — your API key
+Uses the OpenHands SDK LLM class — same models that power OpenHands agents.
+When the pipeline runs as an OpenHands agent job, it uses the agent's own
+LLM access. No separate API key needed.
+
+Configuration (via environment or .env):
+  LLM_MODEL    — e.g. "anthropic/claude-sonnet-4-5-20250929" (default)
+  LLM_API_KEY  — API key (OpenHands Cloud key, or direct provider key)
   LLM_BASE_URL — optional custom endpoint
 """
 
@@ -12,7 +15,6 @@ import logging
 
 from bs4 import BeautifulSoup
 
-from app.config import settings
 from app.schemas import ParsedStory
 
 logger = logging.getLogger(__name__)
@@ -49,13 +51,33 @@ Newsletter content:
 {content}
 """
 
-# Max chars of newsletter content to send to the LLM
 MAX_CONTENT_LENGTH = 15000
+
+# Singleton LLM instance — created once, reused across calls
+_llm = None
+
+
+def _get_llm():
+    """Get or create the OpenHands LLM instance.
+
+    Uses LLM.load_from_env() which reads LLM_MODEL, LLM_API_KEY, LLM_BASE_URL
+    from the environment — same config pattern as the OpenHands agent itself.
+    """
+    global _llm
+    if _llm is None:
+        from openhands.sdk import LLM
+        try:
+            _llm = LLM.load_from_env()
+            logger.info("Initialized OpenHands LLM: %s", _llm.model)
+        except Exception as e:
+            logger.debug("Could not initialize OpenHands LLM: %s", e)
+            return None
+    return _llm
 
 
 def is_configured() -> bool:
-    """Check if LLM extraction is configured."""
-    return bool(settings.llm_api_key or settings.llm_base_url)
+    """Check if LLM extraction is available."""
+    return _get_llm() is not None
 
 
 async def extract_stories(
@@ -63,21 +85,15 @@ async def extract_stories(
     subject: str | None = None,
     from_address: str | None = None,
 ) -> list[ParsedStory] | None:
-    """Extract stories from newsletter HTML using an LLM.
+    """Extract stories from newsletter HTML using the OpenHands LLM.
 
-    Returns list of ParsedStory on success, None if LLM is not configured
-    or extraction fails (caller should fall back to heuristics).
+    Returns list of ParsedStory on success, None if LLM is not available
+    or extraction fails (caller falls back to heuristics).
     """
-    if not is_configured():
+    llm = _get_llm()
+    if llm is None:
         return None
 
-    import litellm
-
-    model = settings.llm_model
-    api_key = settings.llm_api_key or None
-    base_url = settings.llm_base_url or None
-
-    # Convert HTML to readable text to save tokens
     content = _html_to_readable(html)
     if len(content) > MAX_CONTENT_LENGTH:
         content = content[:MAX_CONTENT_LENGTH] + "\n\n[... content truncated ...]"
@@ -89,12 +105,9 @@ async def extract_stories(
     )
 
     try:
-        logger.info("  Calling LLM (%s) for story extraction...", model)
-        response = await litellm.acompletion(
-            model=model,
+        logger.info("  Calling OpenHands LLM (%s) for story extraction...", llm.model)
+        response = llm.completion(
             messages=[{"role": "user", "content": prompt}],
-            api_key=api_key,
-            base_url=base_url,
             temperature=0.1,
             max_tokens=4000,
         )
@@ -136,14 +149,12 @@ async def extract_stories(
 
 
 def _html_to_readable(html: str) -> str:
-    """Convert HTML to a readable text format preserving structure.
+    """Convert HTML to readable text preserving structure for the LLM.
 
-    More readable than raw HTML (saves tokens) but preserves headings,
-    bold text, and links that the LLM needs to identify stories.
+    Keeps headings, bold text, and links — strips tracking/layout noise.
     """
     soup = BeautifulSoup(html, "lxml")
 
-    # Remove scripts, styles, tracking
     for tag in soup.find_all(["script", "style", "noscript"]):
         tag.decompose()
 
@@ -164,16 +175,14 @@ def _html_to_readable(html: str) -> str:
             prefix = "> "
 
         # Preserve bold markers
-        bolds = element.find_all(["strong", "b"])
-        for b in bolds:
+        for b in element.find_all(["strong", "b"]):
             b_text = b.get_text(strip=True)
             if b_text and len(b_text) > 5:
                 text = text.replace(b_text, f"**{b_text}**", 1)
 
         # Append links inline
-        links = element.find_all("a", href=True)
         link_strs = []
-        for a in links:
+        for a in element.find_all("a", href=True):
             href = a["href"]
             if (
                 href.startswith("http")
