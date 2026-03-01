@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -84,6 +84,7 @@ class Story(Base):
         UUID(as_uuid=True), ForeignKey("stories.id")
     )
     position_in_email: Mapped[int | None] = mapped_column(Integer)
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
 
     raw_email: Mapped[RawEmail | None] = relationship(back_populates="stories")

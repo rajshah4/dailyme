@@ -45,3 +45,4 @@ class ParsedStory(BaseModel):
     image_url: str | None = None
     author: str | None = None
     position: int = 0
+    tags: list[str] = []

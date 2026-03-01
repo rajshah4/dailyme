@@ -21,6 +21,9 @@
 <article class="story-card">
     <div class="story-meta">
         <span class="topic-badge">{{ story.topic_label }}</span>
+        {% for tag_label in story.tag_labels %}
+        <span class="tag-badge">{{ tag_label }}</span>
+        {% endfor %}
         {% if story.newsletter_name %}
         <span class="newsletter-source">via {{ story.newsletter_name }}</span>
         {% endif %}

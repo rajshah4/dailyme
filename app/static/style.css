@@ -48,6 +48,16 @@
     font-weight: 500;
 }
 
+.tag-badge {
+    background: #f0f4ff;
+    color: #4a5568;
+    padding: 0.15rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    border: 1px solid #e2e8f0;
+}
+
 .newsletter-source {
     color: var(--pico-muted-color);
 }

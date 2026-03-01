@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from app.processing.clustering import assign_topic, get_topic_display_name
+from app.processing.tagger import get_tag_display
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ class RankedStory:
     newsletter_count: int
     topic_key: str
     topic_label: str
+    tags: list[str]
+    tag_labels: list[str]
     score: float
     first_seen_at: datetime | None
     recency_score: float
@@ -91,6 +94,10 @@ def rank_story_groups(
 
         newsletter_name = story.newsletter.name if story.newsletter else None
 
+        # Get tags from story
+        story_tags = story.tags or []
+        tag_labels = [get_tag_display(t) for t in story_tags]
+
         ranked.append(RankedStory(
             story_group_id=sg.id,
             title=story.title,
@@ -101,6 +108,8 @@ def rank_story_groups(
             newsletter_count=sg.story_count,
             topic_key=topic_key,
             topic_label=topic_label,
+            tags=story_tags,
+            tag_labels=tag_labels,
             score=score,
             first_seen_at=sg.first_seen_at,
             recency_score=recency,

@@ -106,7 +106,7 @@ async def run_pipeline():
             logger.info("[3/5] Parsing: '%s' from %s", email.subject, newsletter.name)
             html = email.html_body or email.text_body or ""
             cleaned = clean_html(html) if email.html_body else html
-            stories = segment_newsletter(cleaned)
+            stories = segment_newsletter(cleaned, subject=email.subject)
             logger.info("  → Extracted %d stories", len(stories))
 
             if needs_llm_fallback(stories):
@@ -154,6 +154,7 @@ async def run_pipeline():
                     author=parsed_story.author,
                     position_in_email=parsed_story.position,
                     is_duplicate=dup_group_id is not None,
+                    tags=parsed_story.tags or [],
                 )
                 session.add(story)
                 await session.flush()
