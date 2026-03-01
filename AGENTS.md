@@ -35,9 +35,13 @@
 - `scripts/run_pipeline.py` — Pipeline script that OpenHands agent executes
 
 ## Build & Run Commands
-- TBD — will use `uv` for dependency management
-- `uv run python -m app.main` (web app)
-- `uv run python scripts/run_pipeline.py` (pipeline, run by OpenHands agent)
+- `uv sync` — install all dependencies
+- `uv sync --dev` — install with dev dependencies (pytest, ruff)
+- `uv run uvicorn app.main:app --reload --port 8000` — start web app
+- `uv run python scripts/run_pipeline.py` — run pipeline (OpenHands agent)
+- `uv run python -m pytest tests/ -v` — run tests
+- `uv run alembic upgrade head` — run database migrations
+- `uv run alembic revision --autogenerate -m "description"` — create migration
 
 ## Important Patterns
 - All external API calls should have retry logic with exponential backoff

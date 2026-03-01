@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DailyMe{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="container">
+        <nav>
+            <ul>
+                <li><strong><a href="/">📰 DailyMe</a></strong></li>
+            </ul>
+            <ul>
+                <li><small>Personalized AI news from your newsletters</small></li>
+            </ul>
+        </nav>
+    </header>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="container">
+        <small>
+            Built with <a href="https://github.com/All-Hands-AI/OpenHands" target="_blank">OpenHands</a>
+            · Powered by coding agents that run continuously
+        </small>
+    </footer>
+</body>
+</html>

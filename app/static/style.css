@@ -1,0 +1,110 @@
+/* DailyMe custom styles — layered on top of Pico CSS */
+
+:root {
+    --pico-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.feed-header {
+    margin-bottom: 1rem;
+}
+
+.feed-header h1 {
+    margin-bottom: 0.25rem;
+}
+
+/* Story cards */
+.story-card {
+    margin-bottom: 0.5rem;
+    padding: 1.25rem;
+}
+
+.story-card h3 {
+    margin: 0.5rem 0;
+    font-size: 1.1rem;
+    line-height: 1.4;
+}
+
+.story-card h3 a {
+    text-decoration: none;
+}
+
+.story-card h3 a:hover {
+    text-decoration: underline;
+}
+
+.story-meta {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+}
+
+.topic-badge {
+    background: var(--pico-secondary-background);
+    padding: 0.15rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.newsletter-source {
+    color: var(--pico-muted-color);
+}
+
+.coverage-badge {
+    color: var(--pico-primary);
+    font-weight: 500;
+}
+
+.story-summary {
+    color: var(--pico-muted-color);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin: 0.5rem 0;
+}
+
+.story-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.75rem;
+}
+
+.btn-feedback {
+    background: none;
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    margin: 0;
+    width: auto;
+}
+
+.btn-feedback:hover {
+    background: var(--pico-secondary-background);
+}
+
+.btn-feedback.active {
+    border-color: var(--pico-primary);
+    background: var(--pico-primary-background);
+}
+
+.story-time {
+    color: var(--pico-muted-color);
+    font-size: 0.75rem;
+    margin-left: auto;
+}
+
+.story-score {
+    font-size: 0.75rem;
+    color: var(--pico-muted-color);
+}
+
+footer {
+    margin-top: 3rem;
+    padding: 1rem 0;
+    text-align: center;
+}

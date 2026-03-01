@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment
+.env
+credentials.json
+token.json
+
+# Database
+*.db
+*.sqlite3
+
+# uv.lock is committed for reproducible builds
+
+# Alembic
+migrations/versions/*.pyc

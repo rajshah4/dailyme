@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}DailyMe — Your AI News Feed{% endblock %}
+
+{% block content %}
+<div class="feed-header">
+    <h1>Today's Feed</h1>
+    {% if last_updated %}
+    <p><small>Last updated: {{ last_updated.strftime('%I:%M %p UTC') }}</small></p>
+    {% endif %}
+</div>
+
+{% if not stories %}
+<article>
+    <h3>No stories yet</h3>
+    <p>Forward some newsletters to your DailyMe inbox and run the pipeline. Stories will appear here.</p>
+</article>
+{% endif %}
+
+{% for story in stories %}
+<article class="story-card">
+    <div class="story-meta">
+        <span class="topic-badge">{{ story.topic_label }}</span>
+        {% if story.newsletter_name %}
+        <span class="newsletter-source">via {{ story.newsletter_name }}</span>
+        {% endif %}
+        {% if story.newsletter_count > 1 %}
+        <span class="coverage-badge">📊 {{ story.newsletter_count }} newsletters</span>
+        {% endif %}
+    </div>
+
+    <h3>
+        {% if story.url %}
+        <a href="{{ story.url }}" target="_blank" rel="noopener">{{ story.title }}</a>
+        {% else %}
+        {{ story.title }}
+        {% endif %}
+    </h3>
+
+    {% if story.summary %}
+    <p class="story-summary">{{ story.summary[:300] }}{% if story.summary|length > 300 %}...{% endif %}</p>
+    {% endif %}
+
+    <div class="story-actions">
+        <form method="post" action="/feedback" style="display:inline">
+            <input type="hidden" name="story_group_id" value="{{ story.story_group_id }}">
+            <input type="hidden" name="action" value="thumbs_up">
+            <button type="submit" class="btn-feedback {% if feedback_map.get(story.story_group_id) == 'thumbs_up' %}active{% endif %}" title="More like this">
+                👍
+            </button>
+        </form>
+        <form method="post" action="/feedback" style="display:inline">
+            <input type="hidden" name="story_group_id" value="{{ story.story_group_id }}">
+            <input type="hidden" name="action" value="thumbs_down">
+            <button type="submit" class="btn-feedback {% if feedback_map.get(story.story_group_id) == 'thumbs_down' %}active{% endif %}" title="Less like this">
+                👎
+            </button>
+        </form>
+
+        {% if story.first_seen_at %}
+        <span class="story-time">
+            {{ story.first_seen_at.strftime('%b %d, %I:%M %p') }}
+        </span>
+        {% endif %}
+
+        <span class="story-score" title="Score: {{ '%.2f'|format(story.score) }}">
+            ⭐ {{ '%.0f'|format(story.score * 100) }}
+        </span>
+    </div>
+</article>
+{% endfor %}
+{% endblock %}
