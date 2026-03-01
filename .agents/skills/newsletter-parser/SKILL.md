@@ -40,7 +40,38 @@ Return a JSON array of stories. Each story must have:
 5. **Skip** ads, sponsor sections, job listings, event promotions, and "share this newsletter" content.
 6. **Skip** the newsletter header/branding and footer/unsubscribe sections.
 
+## Platform-Specific: Substack
+
+Most newsletters come via Substack. Key patterns:
+
+### URL Resolution
+Substack emails contain tracking URLs that should be resolved to clean direct links:
+- **Direct URL**: `https://{author}.substack.com/p/{slug}` — best, use this
+- **Open URL**: `https://open.substack.com/pub/{author}/p/{slug}` — convert to direct
+- **App-link**: `https://substack.com/app-link/post?publication_id=X&post_id=Y` — deep link, avoid
+- **Redirect**: `https://substack.com/redirect/...` — opaque without HTTP, keep as fallback
+
+The module `app/processing/substack.py` handles all URL resolution automatically.
+
+### Single-Article vs Multi-Story
+- **Single-article** (e.g., Alex Chao, ML at Scale): One long post with section headings (Introduction, Methods, etc.). Should be collapsed to 1 `long_form` story.
+- **Multi-story digest** (e.g., AINews, TLDR): Multiple items under headings. Should produce 10-15 stories.
+- Detection heuristic: if first story title matches email subject and most sections have no URLs or generic section headings, it's single-article.
+
+### Junk Sections to Filter
+- "Subscribe to X to unlock the rest" (paywall)
+- "Become a paying subscriber" (paywall CTA)
+- "Invite your friends and earn rewards" (referral)
+- "A subscription gets you:" (promo)
+
 ## Known Newsletter Formats
+
+### AINews (swyx)
+- Lead story is the email subject, followed by commentary
+- "AI Twitter Recap", "AI Reddit Recap", "AI Discord Recap" sections
+- Sub-stories numbered: "1. Topic", "2. Topic", "3. Topic"
+- Redirect URLs point to external sources (Twitter, Reddit, etc.)
+- Typically 12-15 stories
 
 ### TLDR AI / TLDR Tech
 - Stories are grouped under headings like "Headlines & Launches", "Research & Innovation", "Engineering & Resources"
