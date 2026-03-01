@@ -106,7 +106,7 @@ async def run_pipeline():
             logger.info("[3/5] Parsing: '%s' from %s", email.subject, newsletter.name)
             raw_html = email.html_body or email.text_body or ""
             cleaned = clean_html(raw_html) if email.html_body else raw_html
-            stories = segment_newsletter(
+            stories = await segment_newsletter(
                 cleaned, subject=email.subject, from_address=email.from_address,
                 raw_html=raw_html,
             )

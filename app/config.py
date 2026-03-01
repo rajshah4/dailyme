@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     digest_to_email: str = ""
     digest_from_email: str = "digest@dailyme.app"
 
+    # LLM (for newsletter story extraction)
+    llm_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+
     # Schedule
     digest_hour: int = 8
     digest_timezone: str = "US/Eastern"

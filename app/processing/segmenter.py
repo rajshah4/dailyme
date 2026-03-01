@@ -16,6 +16,7 @@ import re
 
 from bs4 import BeautifulSoup, Tag
 
+from app.processing.llm_extract import extract_stories as llm_extract, is_configured as llm_is_configured
 from app.processing.substack import clean_story_urls, is_substack_email
 from app.processing.tagger import detect_tags, is_junk_section
 from app.schemas import ParsedStory
@@ -27,7 +28,7 @@ MIN_TITLE_LENGTH = 10
 MAX_TITLE_LENGTH = 200
 
 
-def segment_newsletter(
+async def segment_newsletter(
     html: str,
     subject: str | None = None,
     from_address: str | None = None,
@@ -41,8 +42,18 @@ def segment_newsletter(
         from_address: Sender email (for platform-specific handling)
         raw_html: Original raw HTML (for URL extraction — clean_html may strip some)
     """
-    # Use raw HTML for URL extraction, cleaned HTML for segmentation
     url_html = raw_html or html
+
+    # Layer 0 (primary): LLM extraction — most accurate, handles any format
+    if llm_is_configured():
+        stories = await llm_extract(html, subject, from_address)
+        if stories and len(stories) >= 1:
+            logger.info("Layer 0 (LLM): extracted %d stories", len(stories))
+            # Resolve Substack URLs
+            if from_address and is_substack_email(from_address):
+                stories = clean_story_urls(stories, url_html)
+            return stories
+        logger.info("  LLM extraction returned no results, falling back to heuristics")
 
     # Layer 1: Structural HTML
     stories = _segment_structural(html)
@@ -58,16 +69,13 @@ def segment_newsletter(
         stories = _post_process(stories, html, url_html, subject, from_address)
         return stories
 
-    # Layer 3: Return what we have — LLM fallback handled by OpenHands agent
+    # Layer 3: Fallback — single article or partial results
     logger.warning(
-        "Layers 1-2 found %d stories (below threshold). "
-        "Flagging for LLM fallback.",
+        "Layers 1-2 found %d stories (below threshold).",
         len(stories),
     )
-    # For single-article newsletters, return the whole thing as one long_form story
     if subject and len(stories) <= 1:
         stories = _fallback_single_article(html, subject, url_html)
-    # Resolve Substack URLs if applicable
     if from_address and is_substack_email(from_address):
         stories = clean_story_urls(stories, url_html, fill_missing=True)
     return stories
@@ -86,31 +94,39 @@ def _segment_structural(html: str) -> list[ParsedStory]:
         if not title or len(title) < MIN_TITLE_LENGTH or len(title) > MAX_TITLE_LENGTH:
             continue
 
-        # Collect body text and links between this heading and the next
-        body_parts = []
-        urls = []
+        # Collect siblings between this heading and the next
+        siblings = []
         sibling = heading.next_sibling
-
         while sibling:
             if isinstance(sibling, Tag):
                 if sibling.name in ["h1", "h2", "h3", "h4"]:
                     break
                 if sibling.name == "hr":
                     break
-
-                text = sibling.get_text(strip=True)
-                if text:
-                    body_parts.append(text)
-
-                # Extract links
-                for a in (
-                    sibling.find_all("a", href=True) if hasattr(sibling, "find_all") else []
-                ):
-                    href = a["href"]
-                    if _is_story_link(href):
-                        urls.append(href)
-
+                siblings.append(sibling)
             sibling = sibling.next_sibling
+
+        # Check if this heading is a section header containing sub-stories
+        # Pattern: "X Recap", "X Roundup" with <p><strong> sub-stories underneath
+        if _is_section_header(title):
+            sub_stories = _extract_bold_substories(siblings)
+            if sub_stories:
+                stories.extend(sub_stories)
+                continue  # Don't create a story for the section header itself
+
+        # Normal heading → single story
+        body_parts = []
+        urls = []
+        for sib in siblings:
+            text = sib.get_text(strip=True)
+            if text:
+                body_parts.append(text)
+            for a in (
+                sib.find_all("a", href=True) if hasattr(sib, "find_all") else []
+            ):
+                href = a["href"]
+                if _is_story_link(href):
+                    urls.append(href)
 
         summary = " ".join(body_parts)[:500] if body_parts else None
         url = urls[0] if urls else None
@@ -126,6 +142,84 @@ def _segment_structural(html: str) -> list[ParsedStory]:
             url=url,
             position=len(stories),
         ))
+
+    return stories
+
+
+# Section headers that contain sub-stories (not stories themselves)
+_SECTION_HEADER_PATTERNS = [
+    r"\brecap\b",
+    r"\broundup\b",
+    r"\bhighlights?\b$",
+    r"\bdigest\b$",
+    r"\bthis week\b",
+    r"\bwhat i.m reading\b",
+    r"\bthings that caught\b",
+]
+
+
+def _is_section_header(title: str) -> bool:
+    """Check if a heading is a section header (not a story title)."""
+    title_lower = title.lower().strip()
+    return any(re.search(p, title_lower) for p in _SECTION_HEADER_PATTERNS)
+
+
+def _extract_bold_substories(siblings: list[Tag]) -> list[ParsedStory]:
+    """Extract sub-stories from bold paragraphs under a section header.
+
+    Pattern (AINews Twitter Recap style):
+      <p><strong>Story Title Here</strong></p>
+      <ul>Story details with links...</ul>
+    """
+    stories = []
+    i = 0
+    while i < len(siblings):
+        sib = siblings[i]
+
+        # Look for <p> with a <strong> child that looks like a story title
+        if sib.name == "p":
+            bold = sib.find(["strong", "b"])
+            if bold:
+                bold_text = bold.get_text(strip=True)
+                if MIN_TITLE_LENGTH <= len(bold_text) <= MAX_TITLE_LENGTH:
+                    # This bold paragraph is a sub-story title
+                    # Collect the next siblings as the body (typically <ul>)
+                    body_parts = []
+                    urls = []
+                    j = i + 1
+                    while j < len(siblings):
+                        next_sib = siblings[j]
+                        # Stop at the next bold paragraph or div separator
+                        if next_sib.name == "p" and next_sib.find(["strong", "b"]):
+                            break
+                        if next_sib.name in ["h1", "h2", "h3", "h4"]:
+                            break
+
+                        text = next_sib.get_text(strip=True)
+                        if text:
+                            body_parts.append(text)
+                        for a in (
+                            next_sib.find_all("a", href=True)
+                            if hasattr(next_sib, "find_all")
+                            else []
+                        ):
+                            href = a["href"]
+                            if _is_story_link(href):
+                                urls.append(href)
+                        j += 1
+
+                    summary = " ".join(body_parts)[:500] if body_parts else None
+                    url = urls[0] if urls else None
+
+                    stories.append(ParsedStory(
+                        title=bold_text,
+                        summary=summary,
+                        url=url,
+                        position=len(stories),
+                    ))
+                    i = j
+                    continue
+        i += 1
 
     return stories
 
