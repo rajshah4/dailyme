@@ -113,12 +113,62 @@ The system runs as a **long-lived cloud agent job** with periodic scheduling, de
 | **Email ingestion** | Gmail API (OAuth2 + polling every 2 min) | Free, no domain setup, you just forward to a Gmail address |
 | **Email sending** | SendGrid (free tier: 100 emails/day) | Reliable, simple API |
 | **HTML parsing** | BeautifulSoup4 + readability-lxml | Robust newsletter HTML cleanup |
-| **Story segmentation** | Heuristic parser + LLM fallback (OpenAI gpt-4o-mini) | Rule-based first, LLM for hard cases |
-| **Embeddings** | OpenAI text-embedding-3-small | Cheap ($0.02/1M tokens), good quality |
+| **Story segmentation** | Heuristic parser + **OpenHands agent LLM fallback** | Rule-based first, OpenHands agent handles hard cases — no separate API key |
+| **Embeddings** | sentence-transformers (`all-MiniLM-L6-v2`) running locally | Free, no API key, fast, good quality for dedup/clustering |
 | **Vector similarity** | pgvector extension on Postgres | No separate vector DB needed |
-| **Scheduling** | APScheduler (in-process) | Simple, no external scheduler needed |
-| **Deployment** | Railway or Fly.io (free/hobby tier) | Easy deploy, persistent process |
+| **Scheduling / Orchestration** | **OpenHands agent (continuous)** + APScheduler (in-process) | OpenHands runs the pipeline periodically via its web UI; APScheduler handles the web app's internal cron |
+| **Deployment** | Railway or Fly.io (free/hobby tier) for the web app; **OpenHands Cloud for agent jobs** | Web app serves the front page; OpenHands agent is the "brain" that processes newsletters |
 | **CSS** | Pico CSS or MVP.css | Classless CSS for instant good-looking HTML |
+
+### The OpenHands-as-Operator Model
+
+This is the key architectural insight: **OpenHands isn't just building the code — it's running the system.**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    OpenHands Agent (Cloud)                   │
+│                                                             │
+│  Runs periodically as a long-lived coding agent job:        │
+│  1. Polls Gmail for new newsletters                         │
+│  2. Parses HTML → extracts stories (uses its own LLM        │
+│     for hard cases — no separate OpenAI key needed)          │
+│  3. Deduplicates stories (local embeddings + DB)            │
+│  4. Clusters into topics                                    │
+│  5. Ranks and writes results to Postgres                    │
+│  6. Triggers daily digest email via SendGrid                │
+│  7. Can even fix its own parsing bugs when it spots errors  │
+│                                                             │
+│  The agent has full access to the codebase + DB + APIs      │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ writes to
+                       ▼
+              ┌────────────────┐
+              │   PostgreSQL   │
+              │   (Neon)       │
+              └───────┬────────┘
+                      │ reads from
+                      ▼
+              ┌────────────────┐
+              │   Web App      │
+              │   (FastAPI on  │
+              │   Railway/Fly) │
+              │                │
+              │   Front page + │
+              │   feedback UI  │
+              └────────────────┘
+```
+
+**What this means in practice:**
+- The OpenHands agent runs a pipeline script (`scripts/run_pipeline.py`) on a schedule via the OpenHands web interface.
+- When the heuristic parser fails on a newsletter, the agent uses its built-in LLM to extract stories — no OpenAI API key in the app's environment.
+- The agent can also improve its own parsers over time: if it detects a newsletter consistently fails, it can write a custom parser for that newsletter's format.
+- The web app is a "dumb" read layer — it just queries Postgres and renders HTML. All intelligence lives in the OpenHands agent.
+
+**Why this is a better demo:**
+- Shows OpenHands as a **continuous operator**, not just a one-shot code generator.
+- Zero LLM API costs in the app itself — OpenHands provides the LLM.
+- The agent can self-heal: fix parsing bugs, improve ranking, add new newsletter support — all without redeploying the app.
+- Compelling narrative: "I forwarded 5 newsletters and an AI agent built me a personalized front page."
 
 ### Decision: Gmail API Polling vs. Inbound Webhook
 
@@ -218,7 +268,7 @@ CREATE TABLE stories (
     author          TEXT,
     published_at    TIMESTAMPTZ,
     extracted_at    TIMESTAMPTZ DEFAULT now(),
-    embedding       vector(1536),             -- for dedup + clustering
+    embedding       vector(384),              -- for dedup + clustering (all-MiniLM-L6-v2)
     cluster_id      UUID REFERENCES topic_clusters(id),
     is_duplicate    BOOLEAN DEFAULT FALSE,
     duplicate_of    UUID REFERENCES stories(id),
@@ -248,7 +298,7 @@ CREATE TABLE story_group_members (
 CREATE TABLE topic_clusters (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     label       TEXT,                         -- e.g. "LLM Agents", "GPU Infrastructure"
-    centroid    vector(1536),
+    centroid    vector(384),
     story_count INT DEFAULT 0,
     created_at  TIMESTAMPTZ DEFAULT now()
 );
@@ -334,20 +384,23 @@ Layer 2 — Heuristic text signals
     • A markdown "##" or "**bold line**" appears after a paragraph break
   - Extract the first URL in each block as the story link
 
-Layer 3 — LLM fallback (for newsletters that resist structural parsing)
-  - Send cleaned text to gpt-4o-mini with prompt:
-    "Extract individual news stories from this newsletter. For each story return:
-     title, summary (1-2 sentences), source_url, author (if mentioned)."
+Layer 3 — OpenHands agent LLM fallback (for newsletters that resist structural parsing)
+  - The OpenHands agent (which already has LLM access) processes the cleaned text
+  - The pipeline script calls a function that writes the newsletter content to a
+    structured prompt and uses the agent's LLM to extract stories
+  - Prompt: "Extract individual news stories from this newsletter. For each story
+    return: title, summary (1-2 sentences), source_url, author (if mentioned)."
   - Parse structured JSON response
   - Cache results keyed by newsletter sender + subject hash
+  - **No separate OpenAI API key needed** — the OpenHands agent provides LLM access
 
 Selection logic:
   - If Layer 1 finds ≥ 2 stories with URLs → use Layer 1
   - Else if Layer 2 finds ≥ 2 stories → use Layer 2
-  - Else → use Layer 3 (LLM)
+  - Else → use Layer 3 (OpenHands agent LLM)
 ```
 
-**Cost control:** Layer 3 (LLM) costs ~$0.005 per newsletter. At 10 newsletters/day = $0.05/day = $1.50/month. Acceptable.
+**Cost control:** Layer 3 runs through OpenHands — no separate LLM API costs. Layers 1 & 2 handle ~80% of newsletters with zero LLM calls. Embeddings use the free local `sentence-transformers` model.
 
 ### 5.3 Deduplication
 
@@ -371,9 +424,10 @@ Step 3 — Title similarity (for cases where different URLs cover same story)
   - If Jaccard similarity of title word-sets > 0.6 → candidate duplicate
 
 Step 4 — Embedding similarity (Week 2)
-  - Compute cosine similarity of story embeddings
-  - If cosine_sim > 0.88 → mark as duplicate
+  - Compute cosine similarity of story embeddings (sentence-transformers, local)
+  - If cosine_sim > 0.85 → mark as duplicate
   - This catches "OpenAI releases GPT-5" vs "GPT-5 announced by OpenAI"
+  - Uses all-MiniLM-L6-v2 (384-dim) — runs locally, no API key needed
 
 Grouping:
   - Duplicates are linked to a story_group
@@ -402,9 +456,10 @@ MVP (Week 1) — Keyword-based topics:
   - Stories with 0 matches → "Other" topic
 
 Week 2 — Embedding-based clustering:
-  - Compute embeddings for all stories in the last 24h
+  - Compute embeddings for all stories in the last 24h (sentence-transformers, local)
   - Run DBSCAN or agglomerative clustering (eps=0.3, min_samples=2)
-  - Label clusters using the most frequent named entities or LLM summary
+  - Label clusters using the most frequent named entities, or have the OpenHands
+    agent generate labels using its LLM during pipeline runs
   - Store cluster centroids for incremental assignment of new stories
 ```
 
@@ -470,11 +525,11 @@ Personalization via feedback:
 | Gmail API rate limit (250 quota units/sec) | Low | Delayed ingestion | Exponential backoff; poll every 2 min not every 30s |
 | Dedup false positives (different stories merged) | Medium | Information loss | Conservative threshold (0.88 cosine); show "also covered by" |
 | Dedup false negatives (same story not caught) | Medium | Cluttered feed | Acceptable for MVP; embedding similarity in Week 2 |
-| LLM API down | Low | Segmentation fails for complex newsletters | Queue and retry; structural parser handles most cases |
+| OpenHands agent unavailable | Low | Segmentation fails for complex newsletters; no pipeline runs | Queue unprocessed emails; structural parser handles most cases standalone; retry on next agent run |
 | Email forwarding breaks formatting | Medium | Garbled content | Extract from original MIME part; test with multiple email clients |
 | SendGrid free tier limit (100/day) | Low | Digest not sent | One email/day is well within limit |
 | Story with no URL | Medium | Can't link out | Display story with newsletter attribution as source |
-| Embedding costs spike | Low | Budget impact | text-embedding-3-small is very cheap; batch embed |
+| Local embedding model too slow | Low | Pipeline latency | all-MiniLM-L6-v2 processes ~100 stories/sec on CPU; well within our scale |
 
 ---
 
@@ -505,7 +560,7 @@ Story points: 1 = few hours, 2 = half day, 3 = full day, 5 = 1.5 days, 8 = 2-3 d
 | 3.1 | HTML cleanup pipeline (tracking pixels, footers, readability extraction) | 2 | 2.2 |
 | 3.2 | Structural story segmenter (Layer 1: HTML heading/block detection) | 3 | 3.1 |
 | 3.3 | Heuristic text segmenter (Layer 2: text pattern matching) | 2 | 3.1 |
-| 3.4 | LLM fallback segmenter (Layer 3: gpt-4o-mini extraction) | 1 | 3.1 |
+| 3.4 | OpenHands agent LLM fallback segmenter (Layer 3: agent-driven extraction) | 1 | 3.1 |
 
 ### Epic 4: Deduplication (5 pts)
 
@@ -521,7 +576,7 @@ Story points: 1 = few hours, 2 = half day, 3 = full day, 5 = 1.5 days, 8 = 2-3 d
 |---|------|--------|-------------|
 | 5.1 | Keyword-based topic assignment | 1 | 3.2 |
 | 5.2 | Ranking function (recency + coverage + interest + position) | 2 | 5.1, 4.2 |
-| 5.3 | Compute + store embeddings for stories (OpenAI API) | 1 | 3.2 |
+| 5.3 | Compute + store embeddings for stories (sentence-transformers, local) | 1 | 3.2 |
 | 5.4 | Embedding-based clustering (DBSCAN) — Week 2 | 1 | 5.3 |
 
 ### Epic 6: Front Page (5 pts)
@@ -574,7 +629,8 @@ Story points: 1 = few hours, 2 = half day, 3 = full day, 5 = 1.5 days, 8 = 2-3 d
 | **Newsletter HTML diversity** — each newsletter uses different templates, making universal parsing hard | High | High | Layered approach (structural → heuristic → LLM). Add per-newsletter parser profiles over time. Start with 5 known newsletters. |
 | **Gmail API OAuth complexity** — OAuth2 refresh flow can be fiddly | Medium | Medium | Use google-auth library with stored refresh token. Test token refresh on day 1. Alternative: use an App Password with IMAP if OAuth is too painful. |
 | **Email forwarding alters content** — forwarding from your primary inbox to the dedicated inbox may wrap original HTML in forwarding markup | Medium | Medium | Parse the MIME structure to find the original message part. Test with Gmail and Apple Mail forwarding. |
-| **Rate limits (Gmail, OpenAI, SendGrid)** — hitting free tier limits | Low | Medium | Gmail: 250 quota units/sec (plenty for polling). OpenAI: batch calls, <$2/month. SendGrid: 100 emails/day (we send 1). |
+| **Rate limits (Gmail, SendGrid)** — hitting free tier limits | Low | Medium | Gmail: 250 quota units/sec (plenty for polling). SendGrid: 100 emails/day (we send 1). No OpenAI rate limits since LLM runs through OpenHands. |
+| **OpenHands agent session limits** — agent job may time out or have execution limits | Medium | Medium | Design pipeline to be idempotent and resumable. Track last-processed email ID. Each run picks up where it left off. |
 | **pgvector query performance** — slow at scale | Low | Low | We'll have <10K stories. IVFFlat index is fine. Upgrade to HNSW if needed. |
 
 ### Product Risks
@@ -600,23 +656,16 @@ Story points: 1 = few hours, 2 = half day, 3 = full day, 5 = 1.5 days, 8 = 2-3 d
 
 - [ ] **Create Gmail account** — Set up `dailyme.inbox@gmail.com` (or similar available address)
 - [ ] **Enable Gmail API** — Go to Google Cloud Console → create project → enable Gmail API → create OAuth2 credentials (desktop app type) → download `credentials.json`
-- [ ] **Get API keys:**
-  - [ ] OpenAI API key (for gpt-4o-mini + embeddings) — set spending limit to $5/month
-  - [ ] SendGrid API key (free tier) — verify sender email
+- [ ] **Get SendGrid API key** (free tier) — verify sender email for daily digest
 - [ ] **Set up database** — Create free Neon Postgres database at neon.tech → enable pgvector extension (`CREATE EXTENSION vector;`)
-- [ ] **Initialize repo:**
-  ```bash
-  cd /Users/rajiv.shah/Code/dailyme
-  git init
-  # We'll scaffold the project structure in the next coding session
-  ```
+- [ ] **Create GitHub repo** — `gh repo create rajivshah/dailyme --public` (or via GitHub UI)
 - [ ] **Forward 5 test newsletters** to the dedicated inbox:
   - TLDR AI
   - The Batch (Andrew Ng)
   - Ben's Bites
   - Import AI
   - The Neuron (or similar)
-- [ ] **Kick off Epic 1 + Epic 2** — Project setup + email ingestion
+- [ ] **Kick off Epic 1 + Epic 2** — Project setup + email ingestion (via OpenHands)
 
 ---
 
@@ -626,10 +675,11 @@ Story points: 1 = few hours, 2 = half day, 3 = full day, 5 = 1.5 days, 8 = 2-3 d
 2. **Gmail polling** over webhook — Simpler setup, 2-min latency is acceptable.
 3. **Server-rendered HTML** over SPA — Faster to build, easier to demo, no JS framework needed. HTMX for interactivity (thumbs up/down).
 4. **PostgreSQL + pgvector** — One database for everything (relational + vectors). No separate vector DB.
-5. **OpenAI for LLM + embeddings** — Cheapest quality/cost ratio for the task. gpt-4o-mini for extraction, text-embedding-3-small for vectors.
-6. **Python monolith** — One service handles ingestion, processing, serving, and scheduling. Split later if needed.
+5. **OpenHands provides the LLM** — No separate OpenAI API key. The OpenHands agent uses its built-in LLM for story extraction when heuristics fail. Embeddings are computed locally via sentence-transformers (free, no API key).
+6. **Two-process architecture** — (a) The OpenHands agent runs the data pipeline (ingest, parse, dedup, rank, digest) as a periodic cloud job. (b) A lightweight FastAPI web app serves the front page from Postgres. The agent writes to the DB; the web app reads from it.
 7. **5-10 newsletters** — The system is designed for a personal scale of 5-10 daily newsletters, not thousands.
 8. **Digest at 8 AM ET** — Configurable, but this is the default.
+9. **OpenHands Cloud** — The agent runs on OpenHands Cloud (web UI). Pipeline execution is triggered periodically. The agent can also be asked ad-hoc to fix bugs, improve parsers, or add features.
 
 ---
 
