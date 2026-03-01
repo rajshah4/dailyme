@@ -20,19 +20,18 @@ from app.schemas import ParsedStory
 logger = logging.getLogger(__name__)
 
 EXTRACTION_PROMPT = """\
-You are extracting the notable news stories from an email newsletter digest.
+You are extracting every individual news story from an email newsletter.
 
-Extract the **top stories** — the ones a busy AI practitioner would want to see.
-For large digests (like AINews), focus on the 8-15 most significant items, not every link.
+Extract ALL distinct stories — every item the newsletter covers, no matter how brief.
 
 Rules:
-1. Extract distinct NEWS STORIES, not every link or mention in the newsletter.
+1. Each distinct news item is a separate story. If the newsletter mentions 30 things, return 30 stories.
 2. Use the actual story headline, NOT the section header. "AI Twitter Recap" is a section heading, not a story — extract the individual stories within it.
 3. Titles should be concise (under 100 chars). Use the newsletter's own headline when available.
 4. Summaries: 1-2 sentences capturing the key point. Don't repeat the title.
 5. URL: the link to the original article/source. Prefer direct URLs over tracking/redirect URLs. Omit if no clear source link.
 6. Tags: assign 1-2 from this list: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark, opinion
-7. SKIP all of these: ads, sponsors, job listings, "share this newsletter", subscribe CTAs, referral promos, social media follow links, unsubscribe footers, author bios.
+7. SKIP only these: ads, sponsors, job listings, "share this newsletter", subscribe CTAs, referral promos, social media follow links, unsubscribe footers, author bios.
 8. For single-article newsletters (one long post, not a multi-story digest), return exactly 1 story with tag "long_form".
 
 Return a JSON array only, no markdown fences:
@@ -47,7 +46,7 @@ Newsletter content:
 {content}
 """
 
-MAX_CONTENT_LENGTH = 15000
+MAX_CONTENT_LENGTH = 30000
 
 # Singleton LLM instance — created once, reused across calls
 _llm = None
