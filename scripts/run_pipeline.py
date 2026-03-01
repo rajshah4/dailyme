@@ -32,7 +32,7 @@ from app.ingestion.parser import (
 from app.models import Base, Newsletter, RawEmail, Story, StoryGroup, StoryGroupMember
 from app.processing.clustering import assign_topic
 from app.processing.dedup import canonicalize_url, find_duplicate
-from app.processing.segmenter import needs_llm_fallback, segment_newsletter
+from app.processing.segmenter import segment_newsletter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +54,7 @@ async def run_pipeline():
         "stories_extracted": 0,
         "stories_deduped": 0,
         "groups_created": 0,
-        "llm_fallback_needed": 0,
+        "llm_errors": 0,
     }
 
     # Step 1: Fetch unread emails from Gmail
@@ -112,13 +112,10 @@ async def run_pipeline():
             )
             logger.info("  → Extracted %d stories", len(stories))
 
-            if needs_llm_fallback(stories):
-                stats["llm_fallback_needed"] += 1
-                logger.warning(
-                    "  ⚠ Only %d stories found — flagged for LLM fallback. "
-                    "Raw email stored for reprocessing.",
-                    len(stories),
-                )
+            if not stories:
+                stats["llm_errors"] += 1
+                logger.warning("  ⚠ No stories extracted — skipping")
+                continue
 
             # Step 4: Dedup and create story groups
             logger.info("[4/5] Deduplicating stories...")
@@ -228,7 +225,7 @@ async def run_pipeline():
     logger.info("  Stories extracted:    %d", stats["stories_extracted"])
     logger.info("  Duplicates found:    %d", stats["stories_deduped"])
     logger.info("  New story groups:    %d", stats["groups_created"])
-    logger.info("  LLM fallback needed: %d", stats["llm_fallback_needed"])
+    logger.info("  LLM errors:          %d", stats["llm_errors"])
     logger.info("=" * 60)
 
     return stats
