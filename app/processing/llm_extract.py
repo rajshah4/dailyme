@@ -29,7 +29,7 @@ Rules:
 2. Use the actual story headline, NOT the section header. "AI Twitter Recap" is a section heading, not a story — extract the individual stories within it.
 3. Titles should be concise (under 100 chars). Use the newsletter's own headline when available.
 4. Summaries: 1-2 sentences capturing the key point. Don't repeat the title.
-5. URL: the link to the original article/source. Prefer direct URLs over tracking/redirect URLs. Omit if no clear source link.
+5. URL: the link to the original article/source. Include whatever URL is available — even redirect/tracking URLs (like substack.com/redirect/...) are fine. We resolve them later. Only omit if there is truly no URL at all.
 6. Tags: assign 1-2 from this list: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark, opinion
 7. SKIP only these: ads, sponsors, job listings, "share this newsletter", subscribe CTAs, referral promos, social media follow links, unsubscribe footers, author bios.
 8. For single-article newsletters (one long post, not a multi-story digest), return exactly 1 story with tag "long_form".
