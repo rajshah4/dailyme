@@ -29,3 +29,4 @@ token.json
 
 # Alembic
 migrations/versions/*.pyc
+server.log
