@@ -46,3 +46,14 @@
 - Conservative dedup thresholds to avoid merging different stories
 - Pipeline must be idempotent and resumable (tracks last-processed email ID)
 - OpenHands agent can self-improve: fix parsers, add newsletter-specific handlers
+
+## OpenHands Features Showcased
+See `OPENHANDS_SHOWCASE.md` for the full strategy. Key features demonstrated:
+1. **Skills** — `.agents/skills/` with newsletter-parser, pipeline-runner, dedup-strategy
+2. **Sub-Agent Delegation** — Parallel newsletter processing via DelegateTool
+3. **TaskToolSet** — Sequential pipeline stages (parse → dedup → rank → deliver)
+4. **Custom Tools** — GmailTool, DatabaseTool, SendGridTool, EmbeddingTool
+5. **MCP Integration** — Postgres via MCP server
+6. **Cloud API** — Scheduled pipeline runs via cron → REST API
+7. **Event Hooks** — Pipeline progress tracking, error logging, metrics
+8. **Iterative Refinement** — Self-correcting parser, feedback-driven ranking
