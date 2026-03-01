@@ -14,10 +14,12 @@
 ## Key Decisions
 - **Stack:** Python 3.12 + FastAPI + Jinja2 + PostgreSQL (Neon) + pgvector
 - **Ingestion:** Gmail API polling (every 2 min), dedicated inbox
-- **Segmentation:** 3-layer approach: structural HTML → heuristic text → OpenHands agent LLM fallback
+- **Segmentation:** 4-layer approach: LLM (primary) → structural HTML → heuristic text → single-article fallback
+- **LLM Extraction:** litellm (same backend as OpenHands) — any model, configured via LLM_API_KEY
+- **Substack URL Resolver:** `app/processing/substack.py` — extracts clean direct URLs from Substack tracking links
 - **Dedup:** URL canonicalization → title Jaccard similarity → embedding cosine similarity
 - **Embeddings:** sentence-transformers `all-MiniLM-L6-v2` (384-dim, local, free — no API key)
-- **LLM:** Provided by OpenHands agent — no separate OpenAI/Anthropic key needed
+- **Content Tags:** Rule-based: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark
 - **Frontend:** Server-rendered HTML with Pico CSS + HTMX for interactivity
 - **Deployment:** Web app on Railway/Fly.io; pipeline via OpenHands Cloud
 - **Single user, no auth for MVP**
