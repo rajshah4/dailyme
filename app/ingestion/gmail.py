@@ -16,7 +16,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.modify"]
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+LABEL_NAME = "DailyMe"
 
 
 @dataclass
@@ -91,20 +93,34 @@ def _extract_body(payload: dict) -> tuple[str | None, str | None]:
     return html_body, text_body
 
 
-def fetch_unread_emails(service=None, max_results: int = 20) -> list[EmailMessage]:
-    """Fetch unread emails from the newsletter inbox."""
+def _get_label_id(service) -> str | None:
+    """Find the DailyMe label ID."""
+    labels = service.users().labels().list(userId="me").execute()
+    for label in labels.get("labels", []):
+        if label["name"] == LABEL_NAME:
+            return label["id"]
+    return None
+
+
+def fetch_labeled_emails(service=None, max_results: int = 20) -> list[EmailMessage]:
+    """Fetch emails with the DailyMe label."""
     if service is None:
         service = get_gmail_service()
 
+    label_id = _get_label_id(service)
+    if not label_id:
+        logger.error("Label '%s' not found in Gmail. Create it first.", LABEL_NAME)
+        return []
+
     results = service.users().messages().list(
         userId="me",
-        q="is:unread",
+        labelIds=[label_id],
         maxResults=max_results,
     ).execute()
 
     messages = results.get("messages", [])
     if not messages:
-        logger.info("No unread emails found.")
+        logger.info("No emails with label '%s'.", LABEL_NAME)
         return []
 
     emails = []
@@ -136,14 +152,14 @@ def fetch_unread_emails(service=None, max_results: int = 20) -> list[EmailMessag
             text_body=text_body,
         ))
 
-    logger.info("Fetched %d unread emails.", len(emails))
+    logger.info("Fetched %d emails with label '%s'.", len(emails), LABEL_NAME)
     return emails
 
 
+# Keep old name as alias for pipeline compatibility
+fetch_unread_emails = fetch_labeled_emails
+
+
 def mark_as_read(service, gmail_id: str):
-    """Mark an email as read after processing."""
-    service.users().messages().modify(
-        userId="me",
-        id=gmail_id,
-        body={"removeLabelIds": ["UNREAD"]},
-    ).execute()
+    """No-op for readonly scope. Label stays; pipeline uses gmail_id for idempotency."""
+    logger.debug("Readonly scope — skipping mark_as_read for %s", gmail_id)
