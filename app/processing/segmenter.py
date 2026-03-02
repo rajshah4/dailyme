@@ -5,12 +5,15 @@ newsletter structure, identifies real stories vs section headers, extracts
 clean titles/summaries/tags, and handles any format without hardcoded rules.
 
 Post-processing resolves Substack tracking URLs to direct links.
+For beehiiv newsletters (e.g. The Rundown AI), tries to fetch the cleaner
+web version via the "Read Online" link before falling back to email HTML.
 """
 
 import logging
 
 from app.processing.llm_extract import extract_stories as llm_extract, is_configured as llm_is_configured
 from app.processing.substack import clean_story_urls, is_substack_email
+from app.processing.web_version import fetch_web_version
 from app.schemas import ParsedStory
 
 logger = logging.getLogger(__name__)
@@ -41,7 +44,13 @@ async def segment_newsletter(
 
     url_html = raw_html or html
 
-    stories = await llm_extract(html, subject, from_address)
+    # Try to use the web version if available (cleaner, smaller, real URLs)
+    llm_html = html
+    web_html = fetch_web_version(url_html)
+    if web_html:
+        llm_html = web_html
+
+    stories = await llm_extract(llm_html, subject, from_address)
     if not stories:
         logger.warning("LLM returned no stories for: %s", subject)
         return []
