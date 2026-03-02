@@ -1130,7 +1130,6 @@ dependencies = [
     { name = "python-multipart" },
     { name = "readability-lxml" },
     { name = "sendgrid" },
-    { name = "sentence-transformers" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1140,6 +1139,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+]
+pipeline = [
+    { name = "sentence-transformers" },
 ]
 
 [package.dev-dependencies]
@@ -1172,11 +1174,11 @@ requires-dist = [
     { name = "readability-lxml", specifier = ">=0.8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "sendgrid", specifier = ">=6.11.0" },
-    { name = "sentence-transformers", specifier = ">=3.0.0" },
+    { name = "sentence-transformers", marker = "extra == 'pipeline'", specifier = ">=3.0.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["pipeline", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
