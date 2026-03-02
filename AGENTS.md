@@ -7,8 +7,8 @@
 
 ## Key Architecture
 - **Pipeline:** `scripts/run_pipeline.py` — fetches Gmail → LLM extracts stories → dedup → store
-- **Web app:** FastAPI + Jinja2 — reads from Postgres, renders feed
-- **Scheduler:** `scripts/scheduler.py` — runs pipeline on a loop (default: every 2 min)
+- **Pipeline scheduling:** GitHub Actions cron (every 30 min) — see `.github/workflows/pipeline.yml`
+- **Web app:** FastAPI + Jinja2 on Railway — reads from Postgres, renders feed
 - **Database:** Neon Postgres with pgvector
 
 ## Key Decisions
@@ -27,11 +27,16 @@
 - **Timestamps:** `first_seen_at` = email `received_at` (when it hit mailbox, not pipeline run time)
 - **Single user, no auth for MVP**
 
+## Deployment
+- **Web app:** Railway — https://web-production-c609c.up.railway.app/
+- **Pipeline:** GitHub Actions cron — https://github.com/rajshah4/dailyme/actions
+- **DB:** Neon Postgres — ep-delicate-moon-aiqylnhh.c-4.us-east-1.aws.neon.tech
+- **GitHub secrets:** DATABASE_URL, LLM_MODEL, LLM_API_KEY, GMAIL_TOKEN_JSON
+- **Railway env vars:** DATABASE_URL, LLM_MODEL, LLM_API_KEY, GMAIL_TOKEN_JSON (web only)
+
 ## Current State
-- **3 newsletters processed:** AINews, Alex Chao, Machine Learning at Scale
-- **52 stories extracted, 49 with real URLs**
-- **Known issue:** OpenHands Cloud LLM proxy can timeout on large newsletters (The Rundown AI at 35K chars). Pipeline now catches errors and continues.
-- **2 new emails** (The Rundown AI, OpenClaw) labeled but not yet processed (LLM timeout)
+- **6 newsletters in Gmail DailyMe label**
+- **Known issue:** OpenHands Cloud LLM proxy can timeout on large newsletters (The Rundown AI at 35K chars). Pipeline catches errors and continues.
 
 ## .env Configuration
 ```
@@ -52,14 +57,14 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix.
 - `app/processing/ranker.py` — Scoring: recency + coverage + interest + position
 - `app/templates/feed.html` — Feed UI with tag filter bar, star, thumbs up/down
 - `scripts/run_pipeline.py` — Full pipeline: Gmail → parse → dedup → store
-- `scripts/scheduler.py` — Long-running scheduler loop
+- `.github/workflows/pipeline.yml` — GitHub Actions cron (every 30 min)
 
 ## Build & Run Commands
 - `uv sync` — install all dependencies
-- `uv run uvicorn app.main:app --reload --port 8000` — start web app
-- `uv run python scripts/run_pipeline.py` — run pipeline once
-- `uv run python scripts/scheduler.py` — run pipeline on loop (every 2 min)
-- `uv run python scripts/scheduler.py --interval 300` — every 5 minutes
+- `uv run uvicorn app.main:app --reload --port 8000` — start web app locally
+- `uv run python scripts/run_pipeline.py` — run pipeline once locally
+- `gh workflow run pipeline.yml` — trigger pipeline via GitHub Actions
+- `railway up` — deploy web to Railway (link to web service first)
 
 ## Important Patterns
 - Idempotency via `gmail_id` on `raw_emails` table — safe to re-fetch same emails
