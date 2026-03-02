@@ -77,8 +77,8 @@ def rank_story_groups(
         # Interest: from user-defined topic weights
         interest = min(interest_weight, 2.0) / 2.0  # normalize to [0, 1]
 
-        # Feedback: boost/penalize based on recent actions
-        feedback = _feedback_score(sg.id, topic_key, feedback_map)
+        # Feedback: stored as recommendation signal, not used for ranking
+        feedback = 0.0  # thumbs up/down don't change sort order
 
         # Position: stories at the top of newsletters are more important
         position = _position_score(story.position_in_email)

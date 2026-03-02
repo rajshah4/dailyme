@@ -3,7 +3,7 @@
 import base64
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -102,8 +102,8 @@ def _get_label_id(service) -> str | None:
     return None
 
 
-def fetch_labeled_emails(service=None, max_results: int = 20) -> list[EmailMessage]:
-    """Fetch emails with the DailyMe label."""
+def fetch_labeled_emails(service=None, max_results: int = 20, max_age_days: int = 7) -> list[EmailMessage]:
+    """Fetch emails with the DailyMe label from the last max_age_days."""
     if service is None:
         service = get_gmail_service()
 
@@ -112,9 +112,12 @@ def fetch_labeled_emails(service=None, max_results: int = 20) -> list[EmailMessa
         logger.error("Label '%s' not found in Gmail. Create it first.", LABEL_NAME)
         return []
 
+    # Only fetch emails newer than max_age_days
+    after_date = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).strftime("%Y/%m/%d")
     results = service.users().messages().list(
         userId="me",
         labelIds=[label_id],
+        q=f"after:{after_date}",
         maxResults=max_results,
     ).execute()
 

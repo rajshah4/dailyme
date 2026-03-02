@@ -109,6 +109,7 @@ class StoryGroup(Base):
     url_canonical: Mapped[str | None] = mapped_column(Text)
     story_count: Mapped[int] = mapped_column(Integer, default=1)
     first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    starred: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
 
     canonical_story: Mapped[Story | None] = relationship(foreign_keys=[canonical_story_id])

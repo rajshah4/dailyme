@@ -106,10 +106,16 @@ async def run_pipeline():
             logger.info("[3/5] Parsing: '%s' from %s", email.subject, newsletter.name)
             raw_html = email.html_body or email.text_body or ""
             cleaned = clean_html(raw_html) if email.html_body else raw_html
-            stories = await segment_newsletter(
-                cleaned, subject=email.subject, from_address=email.from_address,
-                raw_html=raw_html,
-            )
+            try:
+                stories = await segment_newsletter(
+                    cleaned, subject=email.subject, from_address=email.from_address,
+                    raw_html=raw_html,
+                )
+            except Exception as e:
+                stats["llm_errors"] += 1
+                logger.error("  ⚠ LLM extraction failed: %s — skipping", e)
+                raw_email.parsed = True  # don't retry on next run
+                continue
             logger.info("  → Extracted %d stories", len(stories))
 
             if not stories:
@@ -179,13 +185,13 @@ async def run_pipeline():
 
                     logger.debug("  → Duplicate: '%s' → existing group", parsed_story.title[:50])
                 else:
-                    # Create new group
+                    # Create new group — use email received_at as the timestamp
                     group = StoryGroup(
                         canonical_story_id=story.id,
                         title=parsed_story.title,
                         url_canonical=url_canonical,
                         story_count=1,
-                        first_seen_at=datetime.now(timezone.utc),
+                        first_seen_at=email.received_at,
                     )
                     session.add(group)
                     await session.flush()
