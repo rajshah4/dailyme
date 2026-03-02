@@ -36,9 +36,9 @@
 
 ## Current State
 - **6 newsletters in Gmail DailyMe label**
-- **58 stories in feed** from AINews, Import AI, and others
+- **71 stories in feed** from AINews, Import AI, The Rundown AI, Cobus Greyling, and others
 - **Pipeline stable** — GitHub Actions cron running green every 30 min
-- **Known issue:** The Rundown AI (~35K chars) causes LLM proxy timeout. Now capped at 5 min timeout + 1 retry, marked parsed and skipped.
+- **The Rundown AI:** Now uses web version (14K chars vs 35K email) via constructed URL fallback; extracts 12 stories in ~3.5 min
 
 ## .env Configuration
 ```
@@ -54,7 +54,8 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix.
 - `app/ingestion/gmail.py` — Gmail API client, `fetch_labeled_emails()` with 7-day `after:` filter
 - `app/processing/llm_extract.py` — LLM-based story extraction, `_html_to_readable()` converter
 - `app/processing/substack.py` — Substack URL resolution (regex + HTTP redirect follow)
-- `app/processing/segmenter.py` — Orchestrates LLM extraction + URL resolution
+- `app/processing/segmenter.py` — Orchestrates LLM extraction + URL resolution + web version
+- `app/processing/web_version.py` — Fetches cleaner web version of beehiiv newsletters (constructed URL fallback)
 - `app/processing/dedup.py` — URL canonicalization + title similarity
 - `app/processing/ranker.py` — Scoring: recency + coverage + interest + position
 - `app/templates/feed.html` — Feed UI with tag filter bar, star, thumbs up/down
@@ -76,6 +77,8 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix.
 - Pipeline catches LLM errors per-email and continues (marks email as parsed to avoid retries)
 - `StoryGroup.first_seen_at` = email `received_at`, NOT `datetime.now()`
 - **Commit per email** — each email gets its own DB session + commit, so one failure doesn't roll back everything
-- **LLM timeout=300, num_retries=1** — set on instance in `_get_llm()`, NOT via completion() kwargs (SDK already passes timeout internally)
-- **asyncio.wait_for()** wraps `segment_newsletter()` as backup timeout, but won't cancel sync LLM calls mid-flight
+- **LLM timeout via env vars** — `LLM_TIMEOUT=120` and `LLM_NUM_RETRIES=2` in GHA workflow (load_from_env reads LLM_ prefix). Post-init `_llm.timeout = N` doesn't work reliably
+- **asyncio.wait_for(300s)** wraps `segment_newsletter()` as backup timeout, but won't cancel sync LLM calls mid-flight
 - **Don't pass `timeout` as kwarg to `llm.completion()`** — causes "multiple values for keyword argument" error
+- **Web version for beehiiv newsletters** — `web_version.py` fetches cleaner web page via constructed URL (beehiiv redirects blocked by Cloudflare in GHA). Maps sender domain → base URL in `_SENDER_WEB_PATTERNS`
+- **Neon DB connection drops** after ~5 min idle — if LLM takes >5 min, the DB session dies. `pool_pre_ping` only helps at checkout, not during a long-running transaction. Keep LLM processing under 5 min total
