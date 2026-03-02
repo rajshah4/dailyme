@@ -1,7 +1,9 @@
 """Gmail API client for polling the dedicated newsletter inbox."""
 
 import base64
+import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -32,26 +34,49 @@ class EmailMessage:
 
 
 def get_gmail_service():
-    """Authenticate and return a Gmail API service."""
+    """Authenticate and return a Gmail API service.
+
+    Credentials can come from:
+    1. GMAIL_TOKEN_JSON env var (base64-encoded token.json content — for cloud)
+    2. token.json file on disk (local dev)
+    3. OAuth flow via credentials.json (initial setup only)
+    """
     creds = None
     token_path = Path(settings.gmail_token_json)
     creds_path = Path(settings.gmail_credentials_json)
 
-    if token_path.exists():
+    # Cloud path: load from env var
+    token_env = os.environ.get("GMAIL_TOKEN_JSON")
+    if token_env:
+        try:
+            token_data = base64.b64decode(token_env).decode()
+            creds = Credentials.from_authorized_user_info(json.loads(token_data), SCOPES)
+            logger.info("Loaded Gmail credentials from GMAIL_TOKEN_JSON env var")
+        except Exception as e:
+            logger.warning("Failed to load GMAIL_TOKEN_JSON env var: %s", e)
+
+    # Local path: load from file
+    if not creds and token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            # Persist refreshed token
+            if token_env:
+                # Update env var hint — actual persistence is in Railway/etc
+                logger.info("Token refreshed (update GMAIL_TOKEN_JSON env var if needed)")
+            elif token_path.parent.exists():
+                token_path.write_text(creds.to_json())
         else:
             if not creds_path.exists():
                 raise FileNotFoundError(
                     f"Gmail credentials not found at {creds_path}. "
-                    "Download from Google Cloud Console."
+                    "Download from Google Cloud Console or set GMAIL_TOKEN_JSON env var."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
             creds = flow.run_local_server(port=0)
-        token_path.write_text(creds.to_json())
+            token_path.write_text(creds.to_json())
 
     return build("gmail", "v1", credentials=creds)
 
