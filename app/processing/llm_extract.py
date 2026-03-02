@@ -47,6 +47,7 @@ Newsletter content:
 """
 
 MAX_CONTENT_LENGTH = 80000
+LLM_TIMEOUT_SECONDS = 300  # 5 min per LLM call — prevents large newsletters from blocking pipeline
 
 # Singleton LLM instance — created once, reused across calls
 _llm = None
@@ -114,6 +115,7 @@ async def extract_stories(
         logger.info("  Calling OpenHands LLM (%s) for story extraction...", llm.model)
         response = llm.completion(
             messages=[Message(role="user", content=[TextContent(text=prompt)])],
+            timeout=LLM_TIMEOUT_SECONDS,
         )
 
         raw = response.message.content[0].text.strip()
