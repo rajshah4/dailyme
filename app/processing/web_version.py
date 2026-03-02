@@ -71,12 +71,12 @@ def fetch_web_version(raw_html: str) -> str | None:
 
         # Check that we actually resolved to a real page (not stuck on beehiiv)
         if r.status_code != 200:
-            logger.debug("  Web version fetch failed: HTTP %d", r.status_code)
+            logger.info("  Web version: HTTP %d, falling back to email", r.status_code)
             return None
 
         # If still on beehiiv domain, the redirect didn't work
         if "beehiiv.com" in final_url and "/p/" not in final_url:
-            logger.debug("  Redirect stuck on beehiiv, skipping web version")
+            logger.info("  Web version: redirect stuck on beehiiv, falling back to email")
             return None
 
         web_html = r.text
@@ -84,8 +84,8 @@ def fetch_web_version(raw_html: str) -> str | None:
         return web_html
 
     except httpx.TimeoutException:
-        logger.debug("  Web version fetch timed out")
+        logger.info("  Web version: fetch timed out, falling back to email")
         return None
     except Exception as e:
-        logger.debug("  Web version fetch failed: %s", e)
+        logger.info("  Web version: fetch failed (%s), falling back to email", e)
         return None

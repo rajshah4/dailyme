@@ -72,9 +72,7 @@ def _get_llm():
 
         try:
             _llm = LLM.load_from_env()
-            _llm.timeout = 300       # 5 min — prevents large newsletters from blocking pipeline
-            _llm.num_retries = 1     # 1 retry max (not 3) to stay within GHA budget
-            logger.info("Initialized OpenHands LLM: %s", _llm.model)
+            logger.info("Initialized OpenHands LLM: %s (timeout=%s, retries=%s)", _llm.model, _llm.timeout, _llm.num_retries)
         except Exception as e:
             logger.debug("Could not initialize OpenHands LLM: %s", e)
             return None
