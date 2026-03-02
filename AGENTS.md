@@ -36,7 +36,9 @@
 
 ## Current State
 - **6 newsletters in Gmail DailyMe label**
-- **Known issue:** OpenHands Cloud LLM proxy can timeout on large newsletters (The Rundown AI at 35K chars). Pipeline catches errors and continues.
+- **58 stories in feed** from AINews, Import AI, and others
+- **Pipeline stable** — GitHub Actions cron running green every 30 min
+- **Known issue:** The Rundown AI (~35K chars) causes LLM proxy timeout. Now capped at 5 min timeout + 1 retry, marked parsed and skipped.
 
 ## .env Configuration
 ```
@@ -73,3 +75,7 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix.
 - Substack redirect URLs are opaque UUIDs — must follow HTTP HEAD to resolve
 - Pipeline catches LLM errors per-email and continues (marks email as parsed to avoid retries)
 - `StoryGroup.first_seen_at` = email `received_at`, NOT `datetime.now()`
+- **Commit per email** — each email gets its own DB session + commit, so one failure doesn't roll back everything
+- **LLM timeout=300, num_retries=1** — set on instance in `_get_llm()`, NOT via completion() kwargs (SDK already passes timeout internally)
+- **asyncio.wait_for()** wraps `segment_newsletter()` as backup timeout, but won't cancel sync LLM calls mid-flight
+- **Don't pass `timeout` as kwarg to `llm.completion()`** — causes "multiple values for keyword argument" error
