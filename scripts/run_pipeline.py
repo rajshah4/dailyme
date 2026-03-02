@@ -72,10 +72,13 @@ async def run_pipeline():
         logger.info("No new emails. Pipeline complete.")
         return stats
 
+    # Per-email timeout: skip newsletters that take too long (e.g. The Rundown AI at 35K chars)
+    EMAIL_TIMEOUT_SECONDS = 300  # 5 minutes per email
+
     # Step 2: Store raw emails and identify newsletters
     logger.info("[2/5] Storing raw emails and identifying newsletters...")
-    async with async_session() as session:
-        for email in emails:
+    for email in emails:
+        async with async_session() as session:
             # Check if already processed (idempotency)
             existing = await session.execute(
                 select(RawEmail).where(RawEmail.gmail_id == email.gmail_id)
@@ -102,25 +105,37 @@ async def run_pipeline():
             session.add(raw_email)
             await session.flush()
 
-            # Step 3: Parse and segment
+            # Step 3: Parse and segment (with per-email timeout)
             logger.info("[3/5] Parsing: '%s' from %s", email.subject, newsletter.name)
             raw_html = email.html_body or email.text_body or ""
             cleaned = clean_html(raw_html) if email.html_body else raw_html
             try:
-                stories = await segment_newsletter(
-                    cleaned, subject=email.subject, from_address=email.from_address,
-                    raw_html=raw_html,
+                stories = await asyncio.wait_for(
+                    segment_newsletter(
+                        cleaned, subject=email.subject, from_address=email.from_address,
+                        raw_html=raw_html,
+                    ),
+                    timeout=EMAIL_TIMEOUT_SECONDS,
                 )
+            except asyncio.TimeoutError:
+                stats["llm_errors"] += 1
+                logger.error("  ⚠ LLM extraction timed out after %ds — skipping", EMAIL_TIMEOUT_SECONDS)
+                raw_email.parsed = True  # don't retry on next run
+                await session.commit()
+                continue
             except Exception as e:
                 stats["llm_errors"] += 1
                 logger.error("  ⚠ LLM extraction failed: %s — skipping", e)
                 raw_email.parsed = True  # don't retry on next run
+                await session.commit()
                 continue
             logger.info("  → Extracted %d stories", len(stories))
 
             if not stories:
                 stats["llm_errors"] += 1
                 logger.warning("  ⚠ No stories extracted — skipping")
+                raw_email.parsed = True
+                await session.commit()
                 continue
 
             # Step 4: Dedup and create story groups
@@ -221,7 +236,9 @@ async def run_pipeline():
             except Exception:
                 logger.warning("Could not mark email %s as read", email.gmail_id)
 
-        await session.commit()
+            # Commit per email — so successful work survives even if a later email times out
+            await session.commit()
+            logger.info("  ✓ Committed email '%s'", email.subject[:50])
 
     # Step 5: Summary
     logger.info("[5/5] Pipeline complete!")
