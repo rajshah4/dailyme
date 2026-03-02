@@ -46,7 +46,7 @@ async def segment_newsletter(
 
     # Try to use the web version if available (cleaner, smaller, real URLs)
     llm_html = html
-    web_html = fetch_web_version(url_html)
+    web_html = fetch_web_version(url_html, from_address=from_address, subject=subject)
     if web_html:
         llm_html = web_html
 
