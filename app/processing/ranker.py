@@ -5,6 +5,7 @@ score = (w_recency * recency) + (w_coverage * coverage) + (w_interest * interest
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
@@ -94,6 +95,9 @@ def rank_story_groups(
 
         newsletter_name = story.newsletter.name if story.newsletter else None
 
+        # Fall back to newsletter URL when story has no individual URL
+        story_url = story.url or _newsletter_web_url(story.newsletter)
+
         # Get tags from story
         story_tags = story.tags or []
         tag_labels = [get_tag_display(t) for t in story_tags]
@@ -102,7 +106,7 @@ def rank_story_groups(
             story_group_id=sg.id,
             title=story.title,
             summary=story.summary,
-            url=story.url,
+            url=story_url,
             image_url=story.image_url,
             newsletter_name=newsletter_name,
             newsletter_count=sg.story_count,
@@ -149,3 +153,24 @@ def _position_score(position: int | None) -> float:
     if position is None:
         return 0.5
     return max(0.0, 1.0 - position / 10.0)
+
+
+def _newsletter_web_url(newsletter) -> str | None:
+    """Derive a newsletter's web URL from its sender email.
+
+    Used as fallback when a story has no individual URL.
+    """
+    if not newsletter:
+        return None
+    email = newsletter.sender_email
+    domain = newsletter.sender_domain
+
+    # Substack: username@substack.com → https://username.substack.com/
+    if domain == "substack.com":
+        username = email.split("@")[0]
+        # Strip + suffixes (e.g. "swyx+ainews" → "swyx")
+        username = username.split("+")[0]
+        return f"https://{username}.substack.com/"
+
+    # Other known patterns — use the sender domain
+    return f"https://{domain}/"
