@@ -61,7 +61,7 @@ async def run_pipeline():
     logger.info("[1/5] Fetching unread emails from Gmail...")
     try:
         service = get_gmail_service()
-        emails = fetch_unread_emails(service)
+        emails = fetch_unread_emails(service, max_age_days=3)
         stats["emails_fetched"] = len(emails)
         logger.info("  → Fetched %d unread emails", len(emails))
     except Exception:
