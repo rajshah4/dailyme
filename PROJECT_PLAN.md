@@ -2,6 +2,8 @@
 
 ## Project Plan v1.0
 
+> **Note**: This plan originally included SendGrid for daily email digests, but that feature has been removed. The system now focuses on ingesting newsletters and storing stories in the database for web consumption.
+
 ---
 
 ## 1. Scope, Non-Goals & Success Metrics

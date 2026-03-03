@@ -25,7 +25,7 @@ You forward newsletters → OpenHands Cloud processes them → Personalized feed
 | **Skills** | Newsletter-specific parsing knowledge in `.agents/skills/` |
 | **Sub-Agent Delegation** | Parallel processing of multiple newsletters |
 | **Cloud API** | Scheduled pipeline runs via cron → REST API |
-| **Custom Tools** | Typed Gmail, DB, SendGrid, Embedding tools |
+| **Custom Tools** | Typed Gmail, DB, Embedding tools |
 | **Iterative Refinement** | Self-improving parser accuracy |
 
 See [OPENHANDS_SHOWCASE.md](OPENHANDS_SHOWCASE.md) for the full strategy.
