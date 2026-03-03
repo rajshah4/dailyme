@@ -20,7 +20,7 @@ from app.models import (
 )
 from app.processing.ranker import rank_story_groups
 
-STORY_TTL_DAYS = 7
+STORY_TTL_DAYS = 3
 
 app = FastAPI(title="DailyMe", description="Personalized AI news from newsletters")
 
