@@ -1,0 +1,21 @@
+# Vercel build exclusions
+.git
+.github
+.env
+.env.*
+__pycache__
+*.pyc
+.pytest_cache
+.venv
+venv
+node_modules
+.DS_Store
+tests/
+scripts/
+migrations/
+*.md
+!README.md
+uv.lock
+railway.toml
+Dockerfile
+alembic.ini

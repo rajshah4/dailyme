@@ -2,19 +2,21 @@
 
 **Personalized AI news from your newsletters — powered by OpenHands coding agents.**
 
-DailyMe turns forwarded email newsletters into a personalized, deduplicated "front page" and a daily email digest. The unique part: an [OpenHands](https://github.com/All-Hands-AI/OpenHands) AI agent doesn't just build the code — it **runs the system continuously** as an operator.
+DailyMe turns forwarded email newsletters into a personalized, deduplicated news feed. The unique part: an [OpenHands Cloud](https://www.all-hands.dev) agent runs the system continuously as an operator, handling all the heavy compute.
+
+**Live demo:** [rajivshah.com/news](https://rajivshah.com/news)
 
 ## How It Works
 
 ```
-You forward newsletters → OpenHands agent processes them → Personalized front page + daily digest
+You forward newsletters → OpenHands Cloud processes them → Personalized feed on your website
 ```
 
 1. **Forward** your favorite AI newsletters to a dedicated Gmail inbox
-2. **OpenHands agent** wakes up every 2 hours, fetches new emails, parses them into stories
+2. **OpenHands Cloud agent** wakes up every 30 minutes, fetches new emails, parses them into stories
 3. Stories are **deduplicated** (same news from 5 newsletters = 1 story)
-4. Stories are **ranked** by recency, coverage, and your interests
-5. **Front page** shows your personalized feed; **daily digest** hits your inbox at 8 AM
+4. Stories are **ranked** by recency, coverage, and topic tags
+5. **News page** on your website shows your personalized feed (updated in real-time)
 
 ## OpenHands Features Showcased
 
@@ -78,6 +80,50 @@ scripts/
 ├── pipeline-runner/     # Pipeline operation skill
 └── dedup-strategy/      # Dedup knowledge skill
 ```
+
+## Deployment Architecture
+
+### Production Setup
+
+```
+┌─────────────────────────────────────────────┐
+│  GitHub Actions (every 30 min)             │
+│  • Triggers OpenHands Cloud API (~5 sec)   │
+└──────────────────┬──────────────────────────┘
+                   │ starts conversation
+                   ↓
+┌─────────────────────────────────────────────┐
+│  OpenHands Cloud (Heavy Compute)            │
+│  • Fetches Gmail newsletters                │
+│  • Parses with Claude Sonnet 4              │
+│  • Deduplicates stories                     │
+│  • 5-15 minutes per run                     │
+└──────────────────┬──────────────────────────┘
+                   │ writes to
+                   ↓
+┌─────────────────────────────────────────────┐
+│  Neon Postgres (Storage)                    │
+│  • Stores newsletters, stories, feedback    │
+└──────────────────┬──────────────────────────┘
+                   │ reads from
+                   ↓
+┌─────────────────────────────────────────────┐
+│  rajivshah.com/news (Next.js on Vercel)     │
+│  • Serves personalized feed                 │
+│  • Zero compute load (just DB reads)        │
+└─────────────────────────────────────────────┘
+```
+
+**Key Benefits:**
+- ✅ OpenHands Cloud handles all heavy lifting (Gmail, LLM, parsing)
+- ✅ News page integrated into existing website (no separate deployment)
+- ✅ Minimal infrastructure costs (free tiers everywhere)
+- ✅ Clean separation: compute (OpenHands) + storage (Neon) + presentation (Vercel)
+
+**Setup Guides:**
+- **OpenHands Cloud Pipeline:** See `OPENHANDS_CLOUD_SETUP.md`
+- **Web Integration:** News page is in the `rajiv-shah-website-private` repo
+- **Alternative Standalone Deployment:** See `VERCEL_DEPLOYMENT.md` (if you want a separate site)
 
 ## License
 

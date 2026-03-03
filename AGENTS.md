@@ -27,12 +27,18 @@
 - **Timestamps:** `first_seen_at` = email `received_at` (when it hit mailbox, not pipeline run time)
 - **Single user, no auth for MVP**
 
-## Deployment
-- **Web app:** Railway — https://web-production-c609c.up.railway.app/
-- **Pipeline:** GitHub Actions cron — https://github.com/rajshah4/dailyme/actions
+## Deployment (Production)
+- **Web UI:** Integrated into rajivshah.com/news (Next.js page)
+  - No separate deployment needed
+  - Fetches from Neon DB on each page load
+  - See `rajiv-shah-website-private` repo for code
+- **Pipeline:** OpenHands Cloud triggered by GitHub Actions every 30 min
+  - Trigger: `.github/workflows/pipeline.yml` (just API call, ~5 sec)
+  - Compute: OpenHands Cloud (fetches Gmail, parses with LLM, dedup, store)
+  - See `OPENHANDS_CLOUD_SETUP.md` for full details
 - **DB:** Neon Postgres — ep-delicate-moon-aiqylnhh.c-4.us-east-1.aws.neon.tech
-- **GitHub secrets:** DATABASE_URL, LLM_MODEL, LLM_API_KEY, GMAIL_TOKEN_JSON
-- **Railway env vars:** DATABASE_URL, LLM_MODEL, LLM_API_KEY, GMAIL_TOKEN_JSON (web only)
+- **GitHub secrets:** OPENHANDS_API_KEY, DATABASE_URL, GMAIL_TOKEN_JSON
+- **Vercel env vars (website):** DAILYME_DATABASE_URL (for news page)
 
 ## Current State
 - **6 newsletters in Gmail DailyMe label**
