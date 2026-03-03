@@ -1,4 +1,4 @@
-name: Trigger Pipeline (OpenHands Cloud)
+name: Run Pipeline
 
 on:
   schedule:
@@ -7,28 +7,30 @@ on:
   workflow_dispatch: # Manual trigger
 
 jobs:
-  trigger:
+  pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # Just triggering API, not running the pipeline
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install requests
-        run: pip install requests
+      - name: Install dependencies
+        run: uv sync --no-dev --frozen
 
-      - name: Trigger OpenHands Cloud pipeline
+      - name: Run pipeline
         env:
-          OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
-          GITHUB_REPO: ${{ github.repository }}
-          GITHUB_BRANCH: ${{ github.ref_name }}
-        run: python scripts/openhands_trigger.py
-        
-      - name: Summary
-        run: |
-          echo "✅ Pipeline triggered on OpenHands Cloud"
-          echo "🔗 All heavy compute happens there (not in GitHub Actions)"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+          LLM_NUM_RETRIES: "2"    # 2 total attempts to stay within 30-min budget
+          LLM_TIMEOUT: "120"      # 2 min per attempt
+        run: uv run python scripts/run_pipeline.py
