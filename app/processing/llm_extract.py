@@ -55,9 +55,8 @@ _llm = None
 def _get_llm():
     """Get or create the OpenHands LLM instance.
 
-    Uses LLM.load_from_env() which reads LLM_MODEL, LLM_API_KEY, LLM_BASE_URL
-    from the environment — same config pattern as the OpenHands agent itself.
-    Loads .env file first so local dev works without manual exports.
+    Uses LLM.load_from_env() which reads LLM_MODEL, LLM_API_KEY from environment.
+    When running on OpenHands Cloud, use the LLM API key from Settings > API Keys.
     """
     global _llm
     if _llm is None:
@@ -65,16 +64,13 @@ def _get_llm():
         from dotenv import load_dotenv
         from openhands.sdk import LLM
 
-        load_dotenv()  # ensure .env vars are in os.environ for LLM.load_from_env()
-
-        if not os.getenv("LLM_API_KEY"):
-            return None
+        load_dotenv()
 
         try:
             _llm = LLM.load_from_env()
             logger.info("Initialized OpenHands LLM: %s (timeout=%s, retries=%s)", _llm.model, _llm.timeout, _llm.num_retries)
         except Exception as e:
-            logger.debug("Could not initialize OpenHands LLM: %s", e)
+            logger.warning("Could not initialize OpenHands LLM: %s", e)
             return None
     return _llm
 
