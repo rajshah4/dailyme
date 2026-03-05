@@ -1,299 +1,169 @@
-# ☁️ OpenHands Cloud Compute Setup
+# OpenHands Cloud LLM Integration - Setup Guide
 
-This guide shows you how to use **OpenHands Cloud for all heavy compute** while hosting the web app on your own domain.
+## Summary
 
-## Architecture
+The DailyMe pipeline now uses **OpenHands Cloud LLM API** for story extraction from newsletters. This guide explains the two types of API keys and how to configure the pipeline.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Cron Trigger (GitHub Actions)                              │
-│  • Runs every 30 minutes                                    │
-│  • Just makes one API call (~5 seconds)                     │
-│  • Zero heavy compute                                       │
-└────────────────────┬────────────────────────────────────────┘
-                     │ triggers
-                     ↓
-┌─────────────────────────────────────────────────────────────┐
-│  OpenHands Cloud (Heavy Compute)                            │
-│  • Fetches Gmail newsletters                                │
-│  • Parses with LLM (Claude Sonnet 4)                        │
-│  • Deduplicates stories                                     │
-│  • Writes results to database                               │
-│  • Takes 5-15 minutes per run                               │
-└────────────────────┬────────────────────────────────────────┘
-                     │ writes to
-                     ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Neon Postgres (Storage)                                    │
-│  • Stores newsletters, stories, feedback                    │
-└────────────────────┬────────────────────────────────────────┘
-                     │ reads from
-                     ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Vercel at rajivshah.com (Presentation)                     │
-│  • Serves your personalized news feed                       │
-│  • Zero compute load (just reads DB and renders HTML)       │
-└─────────────────────────────────────────────────────────────┘
-```
+## ✅ What Works
 
-## Why This Architecture?
+The pipeline successfully uses OpenHands LLM API through the `openhands/` model prefix, which automatically routes requests to the OpenHands LiteLLM proxy at `https://llm-proxy.app.all-hands.dev/`.
 
-✅ **OpenHands Cloud handles all heavy lifting:**
-- Gmail API calls
-- LLM inference (expensive!)
-- HTML parsing
-- Deduplication logic
+**Test Results:**
+- ✅ LLM API key authentication working
+- ✅ Direct LLM completions via `llm.completion()` 
+- ✅ Story extraction from newsletters
+- ✅ Pipeline runs successfully
 
-✅ **Your infrastructure stays lightweight:**
-- GitHub Actions: Just triggers API (~5 sec, uses free tier minutes)
-- Vercel: Just serves HTML (well within free tier)
-- Neon: Just stores data (free tier)
+## 🔑 Two Types of API Keys
 
-✅ **Benefits:**
-- 🎯 No dependency on Railway or other compute platforms
-- 🌐 Web app hosted at your own domain (rajivshah.com)
-- 💰 Pay-as-you-go for compute (OpenHands Cloud)
-- 🔧 Easy to debug (full logs in OpenHands Cloud UI)
-- ⚡ Can scale if needed (OpenHands handles it)
+OpenHands Cloud provides **two separate API keys**:
 
-## Setup Instructions
+### 1. Cloud API Key (for starting agent conversations)
+- Format: `sk-oh-...`
+- Used for: Starting agent jobs via REST API
+- Get it from: Account settings
+- **NOT used for direct LLM access**
 
-### 1. Get OpenHands Cloud API Key
+### 2. LLM API Key (for direct LLM access)
+- Format: `sk-...` (shorter)
+- Used for: Direct LLM completions in your code
+- Get it from: Settings > API Keys tab > "LLM API Key"
+- **This is what the DailyMe pipeline needs**
 
-1. Go to https://app.all-hands.dev
-2. Sign in or create an account
-3. Navigate to Settings → API Keys
-4. Generate a new API key
-5. Copy the key (starts with `sk-...`)
+## 📋 Configuration
 
-### 2. Add GitHub Secret
+### 1. Get Your OpenHands LLM API Key
 
-Add your OpenHands API key to GitHub:
+1. Log in to [OpenHands Cloud](https://app.all-hands.dev)
+2. Go to **Settings**
+3. Navigate to the **API Keys** tab
+4. Copy your **LLM API Key** (not the Cloud API key)
 
-1. Go to your repository: https://github.com/rajshah4/dailyme
-2. Click **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret**
-4. Name: `OPENHANDS_API_KEY`
-5. Value: Your API key from step 1
-6. Click **Add secret**
+### 2. Configure .env File
 
-**Important:** You can now REMOVE these old secrets (no longer needed):
-- ❌ `LLM_MODEL` (OpenHands Cloud will handle this)
-- ❌ `LLM_API_KEY` (OpenHands Cloud uses its own)
-- ❌ `GMAIL_TOKEN_JSON` (will be in OpenHands Cloud environment)
-
-Keep only:
-- ✅ `OPENHANDS_API_KEY` (new)
-- ✅ `DATABASE_URL` (still needed - OpenHands writes to your DB)
-
-### 3. Set Up OpenHands Cloud Environment
-
-OpenHands Cloud needs access to your Gmail and database when running the pipeline.
-
-**Option A: Add to GitHub repo (Recommended)**
-
-Create a `.env.cloud` file in your repo with:
+Create or update `.env` in the project root:
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://[user]:[password]@[host]/[database]
+# DailyMe Pipeline - OpenHands Cloud Configuration
+DATABASE_URL=postgresql+asyncpg://your-neon-connection-string
+GMAIL_TOKEN_JSON=your-gmail-token-json
+
+# OpenHands LLM API Key (for direct LLM access)
 LLM_MODEL=openhands/claude-sonnet-4-5-20250929
-GMAIL_TOKEN_JSON='{"token": "...", "refresh_token": "...", ...}'
+LLM_API_KEY=your-llm-api-key-here
+
+LLM_TIMEOUT=120
+LLM_NUM_RETRIES=2
 ```
 
-Then update `scripts/run_pipeline.py` to load this file.
+**Important:** Use the `openhands/` prefix in `LLM_MODEL`. This tells the SDK to route through the OpenHands LiteLLM proxy.
 
-**Option B: Set in OpenHands Cloud UI**
-
-When the conversation starts, OpenHands can ask for these values or you can pre-configure them in your OpenHands Cloud project settings.
-
-### 4. Test the Trigger
-
-**Manually trigger the pipeline:**
+### 3. Run the Pipeline
 
 ```bash
 # Install dependencies
-pip install requests
+uv sync --extra pipeline
 
-# Set your API key
-export OPENHANDS_API_KEY="sk-..."
-export GITHUB_REPO="rajshah4/dailyme"
-export GITHUB_BRANCH="main"
+# Run the full pipeline
+uv run python scripts/run_pipeline.py
 
-# Trigger the pipeline
-python scripts/openhands_trigger.py
+# Or reprocess a specific email
+uv run python reprocess_email.py <gmail_id>
 ```
 
-You'll see output like:
+## 🏗️ How It Works
+
+1. **LLM Initialization**: `app/processing/llm_extract.py` calls `LLM.load_from_env()`
+2. **Model Prefix**: The `openhands/` prefix auto-configures the base URL to `https://llm-proxy.app.all-hands.dev/`
+3. **Authentication**: The LLM API key is sent with each request
+4. **Story Extraction**: The LLM receives newsletter HTML and returns structured JSON with stories
+
+## 💰 Pricing
+
+OpenHands LLM API follows official provider rates with no markup:
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) |
+|-------|----------------------|------------------------|
+| claude-sonnet-4-5-20250929 | $3.00 | $15.00 |
+
+**Typical newsletter:** ~5,000 tokens → ~$0.015-0.075 per email
+
+## 🔧 Code Structure
+
 ```
-🚀 Triggering OpenHands Cloud pipeline for rajshah4/dailyme@main
-✅ Pipeline started: https://app.all-hands.dev/conversations/abc123
-📝 Conversation ID: abc123
-💡 Pipeline running in background. Check progress at the URL above.
-```
-
-Click the URL to watch OpenHands work in real-time! 🎬
-
-**To wait for completion:**
-
-```bash
-python scripts/openhands_trigger.py --wait
-```
-
-This will poll every 30 seconds and exit when the pipeline finishes.
-
-### 5. Enable GitHub Actions Cron
-
-The workflow is already configured in `.github/workflows/pipeline.yml`:
-
-```yaml
-on:
-  schedule:
-    - cron: '*/30 * * * *'  # Every 30 minutes
-  workflow_dispatch:         # Manual trigger button
+app/processing/llm_extract.py
+├── _get_llm()              # Initializes LLM from environment
+├── is_configured()         # Checks if LLM is available
+└── extract_stories()       # Extracts stories using LLM completion
 ```
 
-GitHub Actions will now:
-1. Wake up every 30 minutes
-2. Run for ~5 seconds (just triggers the API)
-3. Exit immediately
-4. OpenHands Cloud does the rest
-
-**Test it:**
-
-1. Go to: https://github.com/rajshah4/dailyme/actions
-2. Click **Trigger Pipeline (OpenHands Cloud)**
-3. Click **Run workflow** → **Run workflow**
-4. Watch it complete in ~5 seconds ✨
-
-### 6. Web Interface
-
-The news feed is integrated into rajivshah.com/news (in the `rajiv-shah-website-private` repo).
-
-**No separate deployment needed!** The website fetches stories directly from your Neon Postgres database.
-
-If you want a standalone deployment instead, see `VERCEL_DEPLOYMENT.md`.
-
-## Cost Estimate
-
-**OpenHands Cloud:**
-- ~48 runs per day (every 30 min)
-- ~5-15 minutes per run (depends on # of newsletters)
-- LLM calls for parsing newsletters
-- **Estimated:** $X-Y/month (contact OpenHands for pricing)
-
-**GitHub Actions:**
-- ~5 seconds per run = ~4 minutes/day
-- Free tier: 2,000 minutes/month
-- **Cost:** $0 (well within free tier)
-
-**Vercel:**
-- Serving HTML only, no compute
-- ~1,500 page views/month (personal use)
-- **Cost:** $0 (free tier)
-
-**Neon Postgres:**
-- Storage + queries
-- **Cost:** $0 (free tier, unless you exceed limits)
-
-**Total:** Just OpenHands Cloud compute costs. Everything else is free! 🎉
-
-## Monitoring & Debugging
-
-### View Pipeline Runs
-
-**OpenHands Cloud:**
-- Dashboard: https://app.all-hands.dev/conversations
-- See full logs, LLM calls, errors
-- Can interact with agent if something fails
-
-**GitHub Actions:**
-- Dashboard: https://github.com/rajshah4/dailyme/actions
-- Just shows the trigger (should always succeed in ~5 sec)
-
-### Common Issues
-
-**Issue: "OPENHANDS_API_KEY not set"**
-
-Fix: Add the secret to GitHub (see step 2)
-
-**Issue: OpenHands can't access Gmail/Database**
-
-Fix: Make sure `DATABASE_URL` and `GMAIL_TOKEN_JSON` are available to OpenHands Cloud (see step 3)
-
-**Issue: Pipeline times out**
-
-This is fine! OpenHands conversations can run for 30+ minutes if needed. The GitHub Actions job exits immediately after triggering.
-
-**Issue: Want to see live progress**
-
-Visit the conversation URL from the GitHub Actions log output, or check your OpenHands Cloud dashboard.
-
-## Alternative Trigger Methods
-
-Don't want to use GitHub Actions at all? You can trigger from:
-
-### 1. Vercel Cron
-
-Create `api/cron.py`:
+## 📝 Example Usage
 
 ```python
-from scripts.openhands_trigger import OpenHandsAPI
-import os
+from openhands.sdk import LLM
+from openhands.sdk.llm import Message, TextContent
+from dotenv import load_dotenv
 
-def handler(request):
-    api = OpenHandsAPI()
-    conv = api.create_conversation(
-        initial_user_msg="Run DailyMe pipeline...",
-        repository=os.getenv("GITHUB_REPO"),
-        selected_branch="main",
-    )
-    return {"status": "triggered", "url": conv["url"]}
+load_dotenv()
+
+# Load LLM from environment
+llm = LLM.load_from_env()
+
+# Make a completion request
+response = llm.completion(
+    messages=[Message(
+        role="user",
+        content=[TextContent(text="Extract stories from this newsletter...")]
+    )]
+)
+
+print(response.message.content[0].text)
 ```
 
-Then configure in `vercel.json`:
+## ✅ Success Confirmation
 
-```json
-{
-  "crons": [{
-    "path": "/api/cron",
-    "schedule": "*/30 * * * *"
-  }]
-}
-```
-
-### 2. External Cron Service
-
-Use a service like:
-- https://cron-job.org (free)
-- https://www.easycron.com
-- Any server with crontab
-
-Just schedule:
-```bash
-*/30 * * * * curl -X POST https://your-trigger-endpoint.com/trigger
-```
-
-### 3. Your Own Server
-
-If you run a server at rajivshah.com:
+Test that your LLM API key works:
 
 ```bash
-# crontab -e
-*/30 * * * * cd /path/to/dailyme && python scripts/openhands_trigger.py
+cd dailyme
+python3 -c "
+from dotenv import load_dotenv
+load_dotenv()
+
+from openhands.sdk import LLM
+from openhands.sdk.llm import Message, TextContent
+
+llm = LLM.load_from_env()
+print(f'✓ LLM loaded: {llm.model}')
+
+response = llm.completion(
+    messages=[Message(role='user', content=[TextContent(text='Say hello!')])]
+)
+print(f'✓ Response: {response.message.content[0].text}')
+"
 ```
 
-## Next Steps
+Expected output:
+```
+✓ LLM loaded: litellm_proxy/claude-sonnet-4-5-20250929
+✓ Response: Hello!
+```
 
-1. ✅ Get OpenHands Cloud API key
-2. ✅ Add `OPENHANDS_API_KEY` to GitHub secrets
-3. ✅ Test trigger manually
-4. ✅ Enable GitHub Actions cron
-5. ✅ Deploy web app to Vercel (see `VERCEL_DEPLOYMENT.md`)
-6. ✅ Point `news.rajivshah.com` to Vercel
-7. 🎉 Enjoy your fully self-hosted news feed!
+## 🚀 Next Steps
+
+1. ✅ Get your OpenHands LLM API key from the dashboard
+2. ✅ Update `.env` with the LLM API key
+3. ✅ Run the pipeline: `uv run python scripts/run_pipeline.py`
+4. ✅ Monitor LLM extraction in the logs
+
+## 📚 Resources
+
+- [OpenHands Cloud](https://app.all-hands.dev)
+- [OpenHands LLM Documentation](https://docs.openhands.dev/openhands/usage/llms/openhands-llms)
+- [OpenHands SDK Guide](https://docs.openhands.dev/sdk)
+- [LiteLLM Documentation](https://docs.litellm.ai/)
 
 ---
 
-Questions? Check:
-- OpenHands Cloud docs: https://docs.all-hands.dev
-- OpenHands Discord: https://discord.gg/openhands
+**Committed:** 2026-03-05  
+**Status:** ✅ Working with OpenHands LLM API key
