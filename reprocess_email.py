@@ -47,9 +47,14 @@ async def reprocess_email(gmail_id: str):
         
         # Parse and segment
         print("🤖 Extracting stories with LLM...")
+        print(f"   Content length: {len(raw_email.raw_html or raw_email.raw_text or '')} bytes")
         raw_html = raw_email.raw_html or raw_email.raw_text or ""
         cleaned = clean_html(raw_html) if raw_email.raw_html else raw_html
+        print(f"   Cleaned length: {len(cleaned)} bytes")
+        print(f"   Calling segment_newsletter with 300s timeout...")
         
+        import time
+        start = time.time()
         try:
             stories = await asyncio.wait_for(
                 segment_newsletter(
@@ -60,6 +65,8 @@ async def reprocess_email(gmail_id: str):
                 ),
                 timeout=300,
             )
+            elapsed = time.time() - start
+            print(f"   ✓ Segmentation completed in {elapsed:.1f}s")
         except Exception as e:
             print(f"❌ LLM extraction failed: {e}")
             raw_email.parsed = True

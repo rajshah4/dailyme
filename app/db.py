@@ -6,7 +6,7 @@ engine = create_async_engine(
     settings.database_url,
     echo=False,
     pool_pre_ping=True,  # Reconnect stale connections (Neon drops idle ones)
-    pool_recycle=300,     # Recycle connections every 5 min
+    pool_recycle=600,     # Recycle connections every 10 min (handles long LLM operations)
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

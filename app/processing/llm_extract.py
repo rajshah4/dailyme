@@ -46,7 +46,7 @@ Newsletter content:
 {content}
 """
 
-MAX_CONTENT_LENGTH = 80000
+MAX_CONTENT_LENGTH = 40000  # Reduced to handle large newsletters without timing out
 
 # Singleton LLM instance — created once, reused across calls
 _llm = None
