@@ -1,19 +1,28 @@
-"""LLM-powered newsletter story extraction via OpenHands SDK.
+"""LLM-powered newsletter story extraction via OpenHands V1 conversations.
 
-Uses the OpenHands SDK LLM class — same models that power OpenHands agents.
-When the pipeline runs as an OpenHands agent job, it uses the agent's own
-LLM access. No separate API key needed.
+This uses the OpenHands V1 app-conversation API rather than the deprecated
+V0 conversation/LLM completion flow. Each extraction creates a short-lived
+conversation, waits for the agent to finish, reads the final assistant
+message from conversation events, and then deletes the sandbox.
 
 Configuration (via environment or .env):
-  LLM_MODEL    — e.g. "anthropic/claude-sonnet-4-5-20250929" (default)
-  LLM_API_KEY  — API key (OpenHands Cloud key, or direct provider key)
-  LLM_BASE_URL — optional custom endpoint
+  LLM_MODEL                     — e.g. "openhands/claude-sonnet-4-5-20250929"
+  LLM_API_KEY                   — OpenHands Cloud API key
+  OPENHANDS_BASE_URL            — optional app server base URL
+  OPENHANDS_SELECTED_REPOSITORY — optional repo context for the conversation
+  OPENHANDS_SELECTED_BRANCH     — optional branch when repo context is used
 """
 
+import asyncio
 import json
 import logging
+import os
+import time
+from urllib.parse import urlencode
 
+import httpx
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 
 from app.schemas import ParsedStory
 
@@ -25,18 +34,30 @@ You are extracting every individual news story from an email newsletter.
 Extract ALL distinct stories — every item the newsletter covers, no matter how brief.
 
 Rules:
-1. Each distinct news item is a separate story. If the newsletter mentions 30 things, return 30 stories.
-2. Use the actual story headline, NOT the section header. "AI Twitter Recap" is a section heading, not a story — extract the individual stories within it.
+1. Each distinct news item is a separate story. If the newsletter mentions 30 things,
+   return 30 stories.
+2. Use the actual story headline, NOT the section header.
+   "AI Twitter Recap" is a section heading, not a story; extract the individual stories within it.
 3. Titles should be concise (under 100 chars). Use the newsletter's own headline when available.
 4. Summaries: 1-2 sentences capturing the key point. Don't repeat the title.
-5. URL: use the EXACT URL from the newsletter text. Do NOT reconstruct or guess URLs. Copy the URL verbatim, even if it's a redirect/tracking URL (like substack.com/redirect/...). We resolve them later. Only omit if there is truly no URL at all.
-6. Tags: assign 1-2 from this list: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark, opinion
-7. SKIP only these: ads, sponsors, job listings, "share this newsletter", subscribe CTAs, referral promos, social media follow links, unsubscribe footers, author bios.
-8. For single-article newsletters (one long post, not a multi-story digest), return exactly 1 story with tag "long_form".
+5. URL: use the EXACT URL from the newsletter text. Do NOT reconstruct or guess URLs.
+   Copy the URL verbatim, even if it's a redirect/tracking URL. We resolve redirects later.
+   Only omit if there is truly no URL at all.
+6. Tags: assign 1-2 from this list:
+   long_form, research, launch, funding, vendor, podcast, tutorial, benchmark, opinion
+7. SKIP only these: ads, sponsors, job listings, "share this newsletter", subscribe CTAs,
+   referral promos, social media follow links, unsubscribe footers, author bios.
+8. For single-article newsletters (one long post, not a multi-story digest),
+   return exactly 1 story with tag "long_form".
 
 Return a JSON array only, no markdown fences:
 [
-  {{"title": "Story headline", "summary": "1-2 sentence summary", "url": "https://...", "tags": ["research"]}}
+  {{
+    "title": "Story headline",
+    "summary": "1-2 sentence summary",
+    "url": "https://...",
+    "tags": ["research"]
+  }}
 ]
 
 Newsletter subject: {subject}
@@ -48,36 +69,265 @@ Newsletter content:
 
 MAX_CONTENT_LENGTH = 40000  # Reduced to handle large newsletters without timing out
 
-# Singleton LLM instance — created once, reused across calls
-_llm = None
+DEFAULT_OPENHANDS_BASE_URL = "https://app.all-hands.dev"
+DEFAULT_START_TIMEOUT_SECONDS = 120
+DEFAULT_RUN_TIMEOUT_SECONDS = 180
+DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+
+_client = None
 
 
-def _get_llm():
-    """Get or create the OpenHands LLM instance.
+class OpenHandsV1Client:
+    """Minimal client for one-shot V1 app conversations."""
+    def __init__(self) -> None:
+        load_dotenv(".env")
+        self.api_key = (
+            os.getenv("OPENHANDS_API_KEY")
+            or os.getenv("OH_API_KEY")
+            or os.getenv("LLM_API_KEY")
+        )
+        self.base_url = (
+            os.getenv("OPENHANDS_BASE_URL")
+            or os.getenv("LLM_BASE_URL")
+            or DEFAULT_OPENHANDS_BASE_URL
+        ).rstrip("/")
+        self.model = os.getenv("LLM_MODEL")
+        self.selected_repository = os.getenv("OPENHANDS_SELECTED_REPOSITORY")
+        self.selected_branch = os.getenv("OPENHANDS_SELECTED_BRANCH")
+        self.start_timeout_seconds = int(
+            os.getenv("OPENHANDS_START_TIMEOUT", DEFAULT_START_TIMEOUT_SECONDS)
+        )
+        self.run_timeout_seconds = int(
+            os.getenv("OPENHANDS_RUN_TIMEOUT", DEFAULT_RUN_TIMEOUT_SECONDS)
+        )
+        self.poll_interval_seconds = float(
+            os.getenv("OPENHANDS_POLL_INTERVAL", DEFAULT_POLL_INTERVAL_SECONDS)
+        )
+        self.request_timeout_seconds = max(
+            self.start_timeout_seconds,
+            self.run_timeout_seconds,
+            30,
+        )
 
-    Uses LLM.load_from_env() which reads LLM_MODEL, LLM_API_KEY from environment.
-    When running on OpenHands Cloud, use the LLM API key from Settings > API Keys.
-    """
-    global _llm
-    if _llm is None:
-        import os
-        from dotenv import load_dotenv
-        from openhands.sdk import LLM
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
 
-        load_dotenv()
+    def _headers(self, *, session_api_key: str | None = None) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["X-Access-Token"] = self.api_key
+        if session_api_key:
+            headers["X-Session-API-Key"] = session_api_key
+        return headers
 
+    async def extract_json(self, prompt: str) -> str:
+        sandbox_id = None
+        conversation_id = None
+        conversation_url = None
+        session_api_key = None
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers=self._headers(),
+            timeout=self.request_timeout_seconds,
+            follow_redirects=True,
+        ) as client:
+            try:
+                start_task = await self._start_conversation(client, prompt)
+                sandbox_id = start_task.get("sandbox_id")
+                conversation_id = start_task.get("app_conversation_id")
+                if not conversation_id:
+                    raise RuntimeError("OpenHands start task completed without a conversation id")
+
+                conversation = await self._wait_for_conversation(client, conversation_id)
+                conversation_url = conversation.get("conversation_url")
+                session_api_key = conversation.get("session_api_key")
+                events = await self._fetch_message_events(
+                    client,
+                    conversation_id,
+                    conversation_url=conversation_url,
+                    session_api_key=session_api_key,
+                )
+                response = _extract_agent_text_from_events(events)
+                if not response:
+                    raise RuntimeError("OpenHands returned no assistant response")
+                return response
+            finally:
+                if sandbox_id:
+                    await self._delete_sandbox(client, sandbox_id)
+
+    async def _start_conversation(
+        self,
+        client: httpx.AsyncClient,
+        prompt: str,
+    ) -> dict:
+        payload: dict[str, object] = {
+            "initial_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}],
+                "run": True,
+            },
+        }
+        if self.selected_repository:
+            payload["selected_repository"] = self.selected_repository
+        if self.selected_branch:
+            payload["selected_branch"] = self.selected_branch
+
+        response = await client.post("/api/v1/app-conversations", json=payload)
+        response.raise_for_status()
+        start_task = response.json()
+        task_id = start_task["id"]
+
+        deadline = time.monotonic() + self.start_timeout_seconds
+        while time.monotonic() < deadline:
+            task_response = await client.get(
+                "/api/v1/app-conversations/start-tasks",
+                params={"ids": task_id},
+            )
+            task_response.raise_for_status()
+            tasks = task_response.json()
+            task = tasks[0] if tasks else None
+            if not task:
+                raise RuntimeError(f"OpenHands start task disappeared: {task_id}")
+
+            status = task.get("status")
+            if status == "READY":
+                return task
+            if status == "ERROR":
+                raise RuntimeError(
+                    task.get("detail") or "OpenHands conversation failed to start"
+                )
+
+            await asyncio.sleep(self.poll_interval_seconds)
+
+        raise TimeoutError("Timed out waiting for OpenHands conversation start after "
+                           f"{self.start_timeout_seconds}s")
+
+    async def _wait_for_conversation(
+        self,
+        client: httpx.AsyncClient,
+        conversation_id: str,
+    ) -> dict:
+        deadline = time.monotonic() + self.run_timeout_seconds
+        while time.monotonic() < deadline:
+            response = await client.get(
+                "/api/v1/app-conversations",
+                params={"ids": conversation_id},
+            )
+            response.raise_for_status()
+            conversations = response.json()
+            conversation = conversations[0] if conversations else None
+            if not conversation:
+                raise RuntimeError(f"OpenHands conversation disappeared: {conversation_id}")
+
+            sandbox_status = conversation.get("sandbox_status")
+            execution_status = conversation.get("execution_status")
+            if sandbox_status == "ERROR":
+                raise RuntimeError("OpenHands sandbox entered ERROR state")
+            if execution_status == "finished":
+                return conversation
+            if execution_status in {"error", "stuck"}:
+                raise RuntimeError(f"OpenHands conversation ended with status={execution_status}")
+
+            await asyncio.sleep(self.poll_interval_seconds)
+
+        raise TimeoutError(
+            f"Timed out waiting for OpenHands conversation run after {self.run_timeout_seconds}s"
+        )
+
+    async def _fetch_message_events(
+        self,
+        client: httpx.AsyncClient,
+        conversation_id: str,
+        *,
+        conversation_url: str | None,
+        session_api_key: str | None,
+    ) -> list[dict]:
+        if conversation_url and session_api_key:
+            return await self._fetch_agent_server_events(
+                client,
+                conversation_url,
+                conversation_id,
+                session_api_key,
+            )
+
+        response = await client.get(
+            f"/api/v1/conversation/{conversation_id}/events/search",
+            params={"kind__eq": "MessageEvent", "limit": 100, "sort_order": "TIMESTAMP"},
+        )
+        response.raise_for_status()
+        return response.json().get("items", [])
+
+    async def _fetch_agent_server_events(
+        self,
+        client: httpx.AsyncClient,
+        conversation_url: str,
+        conversation_id: str,
+        session_api_key: str,
+    ) -> list[dict]:
+        agent_base_url = conversation_url.split("/api/conversations/")[0].rstrip("/")
+        url = (
+            f"{agent_base_url}/api/conversations/{conversation_id}/events/search?"
+            + urlencode({"limit": 100})
+        )
+        response = await client.get(
+            url,
+            headers=self._headers(session_api_key=session_api_key),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("items", payload.get("events", []))
+
+    async def _delete_sandbox(self, client: httpx.AsyncClient, sandbox_id: str) -> None:
         try:
-            _llm = LLM.load_from_env()
-            logger.info("Initialized OpenHands LLM: %s (timeout=%s, retries=%s)", _llm.model, _llm.timeout, _llm.num_retries)
-        except Exception as e:
-            logger.warning("Could not initialize OpenHands LLM: %s", e)
+            response = await client.delete(f"/api/v1/sandboxes/{sandbox_id}")
+            if response.status_code not in {200, 204, 404, 422}:
+                response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Failed to delete OpenHands sandbox %s: %s", sandbox_id, exc)
+
+
+def _get_client() -> OpenHandsV1Client | None:
+    global _client
+    if _client is None:
+        candidate = OpenHandsV1Client()
+        if not candidate.is_configured:
             return None
-    return _llm
+        _client = candidate
+        logger.info(
+            "Initialized OpenHands V1 client: base_url=%s model=%s repo=%s",
+            candidate.base_url,
+            candidate.model,
+            candidate.selected_repository,
+        )
+    return _client
+
+
+def _extract_agent_text_from_events(events: list[dict]) -> str | None:
+    latest_text = None
+    for event in events:
+        if event.get("kind") != "MessageEvent":
+            continue
+        if event.get("source") != "agent":
+            continue
+
+        llm_message = event.get("llm_message") or {}
+        if llm_message.get("role") != "assistant":
+            continue
+
+        parts = []
+        for content in llm_message.get("content") or []:
+            if content.get("type") == "text" and content.get("text"):
+                parts.append(content["text"])
+        if parts:
+            latest_text = "\n".join(parts).strip()
+    return latest_text
 
 
 def is_configured() -> bool:
     """Check if LLM extraction is available."""
-    return _get_llm() is not None
+    return _get_client() is not None
 
 
 async def extract_stories(
@@ -90,8 +340,8 @@ async def extract_stories(
     Returns list of ParsedStory on success, None if LLM is not available
     or extraction fails (caller falls back to heuristics).
     """
-    llm = _get_llm()
-    if llm is None:
+    client = _get_client()
+    if client is None:
         return None
 
     content = _html_to_readable(html)
@@ -105,20 +355,11 @@ async def extract_stories(
     )
 
     try:
-        from openhands.sdk.llm import Message, TextContent
-
-        logger.info("  Calling OpenHands LLM (%s) for story extraction...", llm.model)
-        response = llm.completion(
-            messages=[Message(role="user", content=[TextContent(text=prompt)])],
+        logger.info(
+            "  Calling OpenHands V1 conversation API (%s) for story extraction...",
+            client.model or "default",
         )
-
-        raw = response.message.content[0].text.strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            raw = raw.strip()
+        raw = _strip_markdown_fences(await client.extract_json(prompt))
 
         stories_data = json.loads(raw)
         if not isinstance(stories_data, list):
@@ -148,7 +389,32 @@ async def extract_stories(
         return None
 
 
-_BLOCK_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "div", "td", "tr", "section", "article"}
+def _strip_markdown_fences(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+    return raw
+
+
+_BLOCK_TAGS = {
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "p",
+    "li",
+    "blockquote",
+    "div",
+    "td",
+    "tr",
+    "section",
+    "article",
+}
 
 
 def _html_to_readable(html: str) -> str:
@@ -164,7 +430,9 @@ def _html_to_readable(html: str) -> str:
         tag.decompose()
 
     lines = []
-    for element in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "td"]):
+    for element in soup.find_all(
+        ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "td"]
+    ):
         # Skip container elements that have block-level children —
         # we'll extract the children individually
         if element.find(_BLOCK_TAGS):

@@ -39,6 +39,7 @@ uv sync
 # Set up environment
 cp .env.example .env
 # Edit .env with your database URL, Gmail credentials, etc.
+# For OpenHands V1 conversations, set OH_API_KEY.
 
 # Run database migrations
 uv run alembic upgrade head
@@ -58,6 +59,12 @@ uv run python scripts/run_pipeline.py
 - **sentence-transformers** for local embeddings (no API key needed)
 - **OpenHands** provides the LLM for hard parsing cases
 - **Pico CSS** for clean, minimal styling
+
+## Environment Notes
+
+- Prefer `OH_API_KEY` for OpenHands V1 conversation-based extraction.
+- `LLM_API_KEY` remains supported as a fallback for older paths and compatibility.
+- `LLM_MODEL=openhands/...` is still the expected model format.
 
 ## Project Structure
 

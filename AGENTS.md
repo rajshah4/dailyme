@@ -37,7 +37,7 @@
   - Compute: OpenHands Cloud (fetches Gmail, parses with LLM, dedup, store)
   - See `OPENHANDS_CLOUD_SETUP.md` for full details
 - **DB:** Neon Postgres — ep-delicate-moon-aiqylnhh.c-4.us-east-1.aws.neon.tech
-- **GitHub secrets:** OPENHANDS_API_KEY, DATABASE_URL, GMAIL_TOKEN_JSON
+- **GitHub secrets:** OPENHANDS_API_KEY, OH_API_KEY, DATABASE_URL, GMAIL_TOKEN_JSON
 - **Vercel env vars (website):** DAILYME_DATABASE_URL (for news page)
 
 ## Current State
@@ -50,9 +50,10 @@
 ```
 DATABASE_URL=postgresql+asyncpg://...@neon.tech/dailyme
 LLM_MODEL=openhands/claude-sonnet-4-5-20250929
+OH_API_KEY=sk-oh-...
 LLM_API_KEY=sk-...
 ```
-No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix.
+No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversations, prefer `OH_API_KEY`; `LLM_API_KEY` remains as a fallback.
 
 ## File Structure
 - `app/main.py` — FastAPI routes: feed (`/`), feedback (`/feedback`), star (`/star`), cleanup (`/cleanup`)
