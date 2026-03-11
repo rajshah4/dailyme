@@ -1,7 +1,8 @@
 """
 Trigger OpenHands Cloud to run the DailyMe pipeline.
 
-This script starts an OpenHands Cloud conversation that executes the pipeline.
+This script starts an OpenHands Cloud V1 app conversation that executes the
+pipeline.
 All heavy compute (Gmail fetching, LLM parsing, deduplication) happens in
 OpenHands Cloud. This script just triggers it.
 
@@ -10,6 +11,7 @@ Usage:
 
 Environment variables:
     OPENHANDS_API_KEY: Your OpenHands Cloud API key
+    OH_API_KEY: Alternate name for the same key
     GITHUB_REPO: Repository name (e.g., "rajshah4/dailyme")
     GITHUB_BRANCH: Branch name (default: "main")
 """
@@ -23,34 +25,39 @@ import requests
 
 
 class OpenHandsAPI:
-    """Minimal OpenHands Cloud API client."""
+    """Minimal OpenHands Cloud V1 app-conversation client."""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
-        self.api_key = api_key or os.getenv("OPENHANDS_API_KEY")
+        self.api_key = api_key or os.getenv("OPENHANDS_API_KEY") or os.getenv("OH_API_KEY")
         if not self.api_key:
-            raise ValueError("OPENHANDS_API_KEY not set")
+            raise ValueError("OPENHANDS_API_KEY or OH_API_KEY not set")
 
         self.base_url = base_url or "https://app.all-hands.dev"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
+            "X-Access-Token": self.api_key,
             "Content-Type": "application/json",
         }
 
-    def create_conversation(
+    def create_conversation_start_task(
         self,
         initial_user_msg: str,
         repository: str,
         selected_branch: str = "main",
     ) -> dict[str, Any]:
-        """Start a new OpenHands conversation."""
+        """Start a new OpenHands V1 app conversation."""
         payload = {
-            "initial_user_msg": initial_user_msg,
-            "repository": repository,
+            "initial_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": initial_user_msg}],
+                "run": True,
+            },
+            "selected_repository": repository,
             "selected_branch": selected_branch,
         }
 
         response = requests.post(
-            f"{self.base_url}/api/conversations",
+            f"{self.base_url}/api/v1/app-conversations",
             headers=self.headers,
             json=payload,
             timeout=30,
@@ -58,15 +65,54 @@ class OpenHandsAPI:
         response.raise_for_status()
         return response.json()
 
-    def get_conversation_status(self, conversation_id: str) -> dict[str, Any]:
-        """Get the status of a conversation."""
+    def get_start_task(self, task_id: str) -> dict[str, Any] | None:
+        """Get the status of a V1 app conversation start task."""
         response = requests.get(
-            f"{self.base_url}/api/conversations/{conversation_id}",
+            f"{self.base_url}/api/v1/app-conversations/start-tasks",
             headers=self.headers,
+            params={"ids": task_id},
             timeout=30,
         )
         response.raise_for_status()
-        return response.json()
+        tasks = response.json()
+        return tasks[0] if tasks else None
+
+    def wait_for_start_task(
+        self,
+        task_id: str,
+        timeout_s: int = 120,
+        poll_interval_s: int = 2,
+    ) -> dict[str, Any]:
+        """Wait until the V1 start task yields an app conversation id."""
+        start_time = time.time()
+
+        while True:
+            if time.time() - start_time > timeout_s:
+                raise TimeoutError(f"Conversation did not start within {timeout_s}s")
+
+            task = self.get_start_task(task_id)
+            if not task:
+                raise RuntimeError(f"Start task disappeared: {task_id}")
+
+            state = str(task.get("status", "unknown")).upper()
+            if state == "READY":
+                return task
+            if state == "ERROR":
+                raise RuntimeError(task.get("detail") or "OpenHands conversation failed to start")
+
+            time.sleep(poll_interval_s)
+
+    def get_conversation_status(self, conversation_id: str) -> dict[str, Any] | None:
+        """Get the status of a V1 app conversation."""
+        response = requests.get(
+            f"{self.base_url}/api/v1/app-conversations",
+            headers=self.headers,
+            params={"ids": conversation_id},
+            timeout=30,
+        )
+        response.raise_for_status()
+        conversations = response.json()
+        return conversations[0] if conversations else None
 
     def poll_until_terminal(
         self,
@@ -77,19 +123,25 @@ class OpenHandsAPI:
         """
         Poll conversation until it reaches a terminal state.
 
-        Terminal states: completed, failed, cancelled, error
+        Terminal states are mapped from V1 execution_status.
         """
         start_time = time.time()
-        terminal_states = {"completed", "failed", "cancelled", "error"}
 
         while True:
             if time.time() - start_time > timeout_s:
                 raise TimeoutError(f"Conversation did not complete within {timeout_s}s")
 
             status = self.get_conversation_status(conversation_id)
-            state = status.get("status", "unknown").lower()
+            if not status:
+                raise RuntimeError(f"Conversation disappeared: {conversation_id}")
 
-            if state in terminal_states:
+            state = str(status.get("execution_status", "unknown")).lower()
+            sandbox_state = str(status.get("sandbox_status", "unknown")).lower()
+
+            if sandbox_state == "error":
+                raise RuntimeError(f"Conversation sandbox entered ERROR: {conversation_id}")
+
+            if state in {"finished", "error", "stuck"}:
                 return status
 
             time.sleep(poll_interval_s)
@@ -111,7 +163,8 @@ def main():
    - DATABASE_URL: Connection to Neon Postgres
    - GMAIL_TOKEN_JSON: Gmail API token for fetching emails
    - LLM_MODEL: openhands/claude-sonnet-4-5-20250929 (or your preferred model)
-   - LLM_API_KEY: Your OpenHands/LLM API key
+   - OH_API_KEY: Your OpenHands Cloud API key
+   - OPENHANDS_API_KEY: Alternate name for the same key
 
 **Execute:**
 ```bash
@@ -136,14 +189,23 @@ uv run python scripts/run_pipeline.py
 
     # Create conversation
     api = OpenHandsAPI()
-    conv = api.create_conversation(
+    start_task = api.create_conversation_start_task(
         initial_user_msg=task,
         repository=repo,
         selected_branch=branch,
     )
 
-    conversation_id = conv.get("conversation_id")
-    conversation_url = conv.get("url", f"{api.base_url}/conversations/{conversation_id}")
+    task_id = start_task.get("id")
+    if not task_id:
+        raise RuntimeError("OpenHands V1 start task returned no id")
+
+    ready_task = api.wait_for_start_task(task_id)
+    conversation_id = ready_task.get("app_conversation_id")
+    if not conversation_id:
+        raise RuntimeError("OpenHands V1 start task returned no app_conversation_id")
+
+    conversation = api.get_conversation_status(conversation_id) or {}
+    conversation_url = conversation.get("conversation_url", f"{api.base_url}/conversations/{conversation_id}")
 
     print(f"✅ Pipeline started: {conversation_url}")
     print(f"📝 Conversation ID: {conversation_id}")
@@ -156,10 +218,10 @@ uv run python scripts/run_pipeline.py
                 timeout_s=1800,  # 30 minutes max
                 poll_interval_s=30,  # Check every 30 seconds
             )
-            status = final.get("status", "unknown")
+            status = final.get("execution_status", "unknown")
             print(f"\n✅ Pipeline {status}: {conversation_url}")
 
-            if status == "completed":
+            if status == "finished":
                 sys.exit(0)
             else:
                 print(f"⚠️  Pipeline ended with status: {status}")
