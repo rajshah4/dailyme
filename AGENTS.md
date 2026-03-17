@@ -54,6 +54,7 @@ OH_API_KEY=sk-oh-...
 LLM_API_KEY=sk-...
 ```
 No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversations, prefer `OH_API_KEY`; `LLM_API_KEY` remains as a fallback.
+- **DATABASE_URL normalization** — `app/db.py` auto-normalizes the URL: converts `postgresql://` → `postgresql+asyncpg://`, strips `sslmode=require` and `channel_binding=require` (asyncpg incompatible), passes SSL via `connect_args={"ssl": True}`. Raw `postgresql://` URLs from Neon (which include `?sslmode=require&channel_binding=require`) work fine as-is.
 
 ## File Structure
 - `app/main.py` — FastAPI routes: feed (`/`), feedback (`/feedback`), star (`/star`), cleanup (`/cleanup`)
