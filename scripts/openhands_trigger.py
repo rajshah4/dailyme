@@ -23,6 +23,9 @@ from typing import Any
 
 import requests
 
+DEFAULT_START_ATTEMPTS = 3
+DEFAULT_START_BACKOFF_SECONDS = 5
+
 
 class OpenHandsAPI:
     """Minimal OpenHands Cloud V1 app-conversation client."""
@@ -147,6 +150,68 @@ class OpenHandsAPI:
             time.sleep(poll_interval_s)
 
 
+def _is_retryable_start_error(error: Exception) -> bool:
+    """Retry transient OpenHands startup failures."""
+    if isinstance(error, requests.HTTPError):
+        response = error.response
+        if response is not None and response.status_code >= 500:
+            return True
+    if isinstance(error, requests.RequestException):
+        return True
+    if isinstance(error, TimeoutError):
+        return True
+    if isinstance(error, RuntimeError):
+        message = str(error).lower()
+        return "500" in message or "timed out" in message or "start task disappeared" in message
+    return False
+
+
+def _start_pipeline_conversation(
+    api: OpenHandsAPI,
+    *,
+    initial_user_msg: str,
+    repository: str,
+    selected_branch: str,
+    max_attempts: int = DEFAULT_START_ATTEMPTS,
+    backoff_seconds: int = DEFAULT_START_BACKOFF_SECONDS,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create an OpenHands conversation with retries for transient startup failures."""
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            start_task = api.create_conversation_start_task(
+                initial_user_msg=initial_user_msg,
+                repository=repository,
+                selected_branch=selected_branch,
+            )
+            task_id = start_task.get("id")
+            if not task_id:
+                raise RuntimeError("OpenHands V1 start task returned no id")
+
+            ready_task = api.wait_for_start_task(task_id)
+            conversation_id = ready_task.get("app_conversation_id")
+            if not conversation_id:
+                raise RuntimeError("OpenHands V1 start task returned no app_conversation_id")
+            return start_task, ready_task
+        except Exception as exc:
+            last_error = exc
+            if attempt >= max_attempts or not _is_retryable_start_error(exc):
+                raise
+
+            print(
+                f"⚠️  OpenHands startup attempt {attempt}/{max_attempts} failed: {exc}",
+                file=sys.stderr,
+            )
+            print(
+                f"🔁 Retrying in {backoff_seconds * attempt}s...",
+                file=sys.stderr,
+            )
+            time.sleep(backoff_seconds * attempt)
+
+    raise RuntimeError(f"OpenHands conversation failed to start: {last_error}")
+
+
 def main():
     """Trigger the DailyMe pipeline on OpenHands Cloud."""
     # Configuration
@@ -189,20 +254,13 @@ uv run python scripts/run_pipeline.py
 
     # Create conversation
     api = OpenHandsAPI()
-    start_task = api.create_conversation_start_task(
+    _start_task, ready_task = _start_pipeline_conversation(
+        api,
         initial_user_msg=task,
         repository=repo,
         selected_branch=branch,
     )
-
-    task_id = start_task.get("id")
-    if not task_id:
-        raise RuntimeError("OpenHands V1 start task returned no id")
-
-    ready_task = api.wait_for_start_task(task_id)
     conversation_id = ready_task.get("app_conversation_id")
-    if not conversation_id:
-        raise RuntimeError("OpenHands V1 start task returned no app_conversation_id")
 
     conversation = api.get_conversation_status(conversation_id) or {}
     conversation_url = conversation.get("conversation_url", f"{api.base_url}/conversations/{conversation_id}")
