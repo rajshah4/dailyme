@@ -56,7 +56,6 @@ uv run python scripts/run_pipeline.py
 - **Python 3.12** + FastAPI + Jinja2 (server-rendered HTML)
 - **PostgreSQL** with pgvector (Neon free tier)
 - **Gmail API** for email ingestion
-- **sentence-transformers** for local embeddings (no API key needed)
 - **OpenHands** provides the LLM for hard parsing cases
 - **Pico CSS** for clean, minimal styling
 
@@ -77,7 +76,6 @@ app/
 ├── schemas.py           # Pydantic schemas
 ├── ingestion/           # Gmail polling + HTML parsing
 ├── processing/          # Segmentation, dedup, clustering, ranking
-├── delivery/            # Daily digest email
 ├── templates/           # Jinja2 HTML templates
 └── static/              # CSS
 scripts/
@@ -102,7 +100,7 @@ scripts/
 ┌─────────────────────────────────────────────┐
 │  OpenHands Cloud (Heavy Compute)            │
 │  • Fetches Gmail newsletters                │
-│  • Parses with Claude Sonnet 4              │
+│  • Parses with Claude Sonnet 4.5            │
 │  • Deduplicates stories                     │
 │  • 5-15 minutes per run                     │
 └──────────────────┬──────────────────────────┘
