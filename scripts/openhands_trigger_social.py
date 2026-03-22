@@ -1,6 +1,6 @@
 """Trigger OpenHands Cloud to run the DailyMe social top-stories pipeline."""
 
-from scripts.openhands_trigger import OpenHandsAPI, _start_pipeline_conversation
+from openhands_trigger import OpenHandsAPI, _start_pipeline_conversation
 
 
 def main() -> None:
