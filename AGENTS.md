@@ -1,13 +1,15 @@
 # DailyMe — Agent Memory
 
 ## Project Overview
-- **What:** Personalized AI news aggregator from forwarded email newsletters
+- **What:** Personalized AI news aggregator from forwarded email newsletters + Social Top Stories (HN/Reddit)
 - **Goal:** Demo app showing OpenHands coding agents running continuously as operators
-- **Status:** Working MVP — pipeline extracts stories from Gmail, web UI live
+- **Status:** Working MVP — pipeline extracts stories from Gmail, social pipeline fetches HN/Reddit, web UI live
 
 ## Key Architecture
 - **Pipeline:** `scripts/run_pipeline.py` — fetches Gmail → LLM extracts stories → dedup → store
+- **Social Pipeline:** `scripts/run_social_pipeline.py` — fetches HN/Reddit → dynamic thresholding → store
 - **Pipeline scheduling:** GitHub Actions cron (every 30 min) — see `.github/workflows/pipeline.yml`
+- **Social scheduling:** GitHub Actions cron (every 2 hours) — see `.github/workflows/social_pipeline.yml`
 - **Web app:** FastAPI + Jinja2 on Railway — reads from Postgres, renders feed
 - **Database:** Neon Postgres with pgvector
 
@@ -29,9 +31,10 @@
 
 ## Deployment (Production)
 - **Web UI:** Integrated into rajivshah.com/news (Next.js page)
-  - No separate deployment needed
-  - Fetches from Neon DB on each page load
-  - See `rajiv-shah-website-private` repo for code
+  - No separate deployment needed; fetches from Neon DB on each page load
+  - **Repo:** `rajiv-shah-website-private` (separate Next.js repo)
+  - **Social RSS:** Endpoint `/news/social-rss.xml` is served by Next.js app, reading `social_stories` table
+  - **FastAPI UI:** (This repo) serves as a fallback/dev UI and API backend at `https://dailyme-production.up.railway.app` (or similar)
 - **Pipeline:** OpenHands Cloud triggered by GitHub Actions every 30 min
   - Trigger: `.github/workflows/pipeline.yml` (just API call, ~5 sec)
   - Compute: OpenHands Cloud (fetches Gmail, parses with LLM, dedup, store)
@@ -43,6 +46,7 @@
 ## Current State
 - **6 newsletters in Gmail DailyMe label**
 - **71 stories in feed** from AINews, Import AI, The Rundown AI, Cobus Greyling, and others
+- **Social feed live** at `/news/social-rss.xml` (Next.js) and `/social/rss.xml` (FastAPI)
 - **Pipeline stable** — GitHub Actions cron running green every 30 min
 - **The Rundown AI:** Now uses web version (14K chars vs 35K email) via constructed URL fallback; extracts 12 stories in ~3.5 min
 
