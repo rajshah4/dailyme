@@ -185,9 +185,13 @@ def _build_social_rss_xml(stories, base_url: str, now: datetime | None = None) -
         ]
         if story.comment_count:
             description_parts.append(f"Comments: {story.comment_count}")
+
+        description_text = " | ".join(description_parts)
         if story.summary:
-            description_parts.append(story.summary)
-        ET.SubElement(item, "description").text = " | ".join(description_parts)
+            # Append summary with a newline for better readability
+            description_text += f"\n\n{story.summary}"
+
+        ET.SubElement(item, "description").text = description_text
 
         ET.SubElement(item, "category").text = f"source:{story.source}"
         ET.SubElement(item, "category").text = f"community:{story.community}"

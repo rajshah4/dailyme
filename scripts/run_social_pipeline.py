@@ -71,6 +71,7 @@ class Candidate:
     upvote_ratio: float | None
     source_created_at: datetime
     tags: list[str]
+    summary: str | None = None
 
 
 def _utc_now() -> datetime:
@@ -223,6 +224,7 @@ async def _fetch_reddit_community_candidates(
             upvote_ratio=float(data.get("upvote_ratio")) if data.get("upvote_ratio") is not None else None,
             source_created_at=created_at,
             tags=["source:reddit", f"community:{community}"],
+            summary=data.get("selftext")[:1000] if data.get("selftext") else None,  # First 1000 chars
         ))
 
     logger.info("Reddit r/%s candidates above threshold (%s): %s", community, threshold, len(candidates))
@@ -312,6 +314,7 @@ async def _upsert_selected(selected: list[Candidate]) -> None:
                 story.rank_score = rank_score
                 story.source_created_at = c.source_created_at
                 story.fetched_at = fetched_at
+                story.summary = c.summary
             else:
                 session.add(SocialStory(
                     source=c.source,
@@ -327,6 +330,7 @@ async def _upsert_selected(selected: list[Candidate]) -> None:
                     rank_score=rank_score,
                     source_created_at=c.source_created_at,
                     fetched_at=fetched_at,
+                    summary=c.summary,
                 ))
 
         # Retention guardrails: age-based + count-based
