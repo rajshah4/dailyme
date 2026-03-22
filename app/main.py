@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from uuid import UUID
+from xml.etree import ElementTree as ET
 
 from fastapi import Depends, FastAPI, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, select
@@ -14,6 +16,7 @@ from app.db import get_session
 from app.models import (
     Feedback,
     InterestWeight,
+    SocialStory,
     Story,
     StoryGroup,
     StoryGroupMember,
@@ -26,20 +29,11 @@ app = FastAPI(title="DailyMe", description="Personalized AI news from newsletter
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
-@app.get("/", response_class=HTMLResponse)
-async def feed(
-    request: Request,
-    tag: str | None = Query(None),
-    starred: bool = Query(False),
-    session: AsyncSession = Depends(get_session),
-):
-    """Front page: ranked, deduped story feed with optional tag filter."""
+def _story_group_query(starred: bool = False):
     cutoff = datetime.now(timezone.utc) - timedelta(days=STORY_TTL_DAYS)
 
-    # Base query: non-expired OR starred
     query = (
         select(StoryGroup)
         .options(
@@ -52,7 +46,6 @@ async def feed(
         .limit(100)
     )
 
-    # Starred filter
     if starred:
         query = (
             select(StoryGroup)
@@ -66,14 +59,16 @@ async def feed(
             .limit(100)
         )
 
-    result = await session.execute(query)
+    return query
+
+
+async def _load_ranked_stories(session: AsyncSession, starred: bool = False):
+    result = await session.execute(_story_group_query(starred=starred))
     story_groups = result.scalars().all()
 
-    # Get interest weights for ranking
     weights_result = await session.execute(select(InterestWeight))
     weights = {w.topic_keyword: w.weight for w in weights_result.scalars().all()}
 
-    # Get recent feedback
     feedback_result = await session.execute(
         select(Feedback).order_by(Feedback.created_at.desc()).limit(200)
     )
@@ -82,8 +77,140 @@ async def feed(
         if fb.story_group_id:
             feedback_map[fb.story_group_id] = fb.action
 
-    # Rank the stories
     ranked = rank_story_groups(story_groups, weights, feedback_map)
+    return story_groups, ranked, feedback_map, weights
+
+
+def _build_rss_xml(
+    stories,
+    base_url: str,
+    *,
+    tag: str | None = None,
+    starred: bool = False,
+    now: datetime | None = None,
+) -> bytes:
+    channel_title = "DailyMe News Feed"
+    if starred:
+        channel_title += " (Starred)"
+    if tag:
+        channel_title += f" — {tag}"
+
+    built_at = now or datetime.now(timezone.utc)
+    if built_at.tzinfo is None:
+        built_at = built_at.replace(tzinfo=timezone.utc)
+
+    rss = ET.Element("rss", version="2.0")
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = channel_title
+    ET.SubElement(channel, "link").text = base_url
+    ET.SubElement(channel, "description").text = "Personalized AI news stories from DailyMe"
+    ET.SubElement(channel, "lastBuildDate").text = format_datetime(
+        built_at.astimezone(timezone.utc),
+        usegmt=True,
+    )
+
+    for story in stories:
+        item = ET.SubElement(channel, "item")
+        story_url = story.url or base_url
+
+        ET.SubElement(item, "title").text = story.title
+        ET.SubElement(item, "link").text = story_url
+
+        guid = ET.SubElement(item, "guid", isPermaLink="false")
+        guid.text = str(story.story_group_id)
+
+        pub_at = story.first_seen_at or built_at
+        if pub_at.tzinfo is None:
+            pub_at = pub_at.replace(tzinfo=timezone.utc)
+        ET.SubElement(item, "pubDate").text = format_datetime(
+            pub_at.astimezone(timezone.utc),
+            usegmt=True,
+        )
+
+        ET.SubElement(item, "description").text = story.summary or ""
+        for story_tag in story.tags:
+            ET.SubElement(item, "category").text = story_tag
+
+    return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
+
+
+async def _load_social_stories(session: AsyncSession, limit: int = 40):
+    result = await session.execute(
+        select(SocialStory)
+        .order_by(SocialStory.fetched_at.desc(), SocialStory.rank_score.desc(), SocialStory.score.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+def _build_social_rss_xml(stories, base_url: str, now: datetime | None = None) -> bytes:
+    built_at = now or datetime.now(timezone.utc)
+    if built_at.tzinfo is None:
+        built_at = built_at.replace(tzinfo=timezone.utc)
+
+    rss = ET.Element("rss", version="2.0")
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = "DailyMe Social Top Stories"
+    ET.SubElement(channel, "link").text = base_url
+    ET.SubElement(channel, "description").text = (
+        "Top-curated stories from Hacker News and Reddit, refreshed every 2 hours"
+    )
+    ET.SubElement(channel, "lastBuildDate").text = format_datetime(
+        built_at.astimezone(timezone.utc),
+        usegmt=True,
+    )
+
+    for story in stories:
+        item = ET.SubElement(channel, "item")
+        link = story.url or story.permalink or base_url
+
+        ET.SubElement(item, "title").text = story.title
+        ET.SubElement(item, "link").text = link
+
+        guid = ET.SubElement(item, "guid", isPermaLink="false")
+        guid.text = f"{story.source}:{story.external_id}"
+
+        pub_at = story.source_created_at or story.fetched_at or built_at
+        if pub_at.tzinfo is None:
+            pub_at = pub_at.replace(tzinfo=timezone.utc)
+        ET.SubElement(item, "pubDate").text = format_datetime(
+            pub_at.astimezone(timezone.utc),
+            usegmt=True,
+        )
+
+        description_parts = [
+            f"Source: {story.source}",
+            f"Community: {story.community}",
+            f"Score: {story.score}",
+        ]
+        if story.comment_count:
+            description_parts.append(f"Comments: {story.comment_count}")
+        if story.summary:
+            description_parts.append(story.summary)
+        ET.SubElement(item, "description").text = " | ".join(description_parts)
+
+        ET.SubElement(item, "category").text = f"source:{story.source}"
+        ET.SubElement(item, "category").text = f"community:{story.community}"
+        for story_tag in story.tags or []:
+            ET.SubElement(item, "category").text = story_tag
+
+    return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
+
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def feed(
+    request: Request,
+    tag: str | None = Query(None),
+    starred: bool = Query(False),
+    session: AsyncSession = Depends(get_session),
+):
+    """Front page: ranked, deduped story feed with optional tag filter."""
+    story_groups, ranked, feedback_map, weights = await _load_ranked_stories(
+        session,
+        starred=starred,
+    )
 
     # Tag filter (post-ranking, since tags come from the canonical story)
     if tag:
@@ -112,6 +239,44 @@ async def feed(
             "last_updated": datetime.now(timezone.utc),
         },
     )
+
+
+
+@app.get("/rss.xml")
+async def rss_feed(
+    request: Request,
+    tag: str | None = Query(None),
+    starred: bool = Query(False),
+    session: AsyncSession = Depends(get_session),
+):
+    """RSS feed of ranked stories with optional tag/starred filtering."""
+    _, ranked, _, _ = await _load_ranked_stories(session, starred=starred)
+
+    if tag:
+        ranked = [r for r in ranked if tag in r.tags]
+
+    xml = _build_rss_xml(
+        ranked,
+        str(request.base_url).rstrip("/"),
+        tag=tag,
+        starred=starred,
+    )
+    return Response(content=xml, media_type="application/rss+xml")
+
+
+
+@app.get("/social/rss.xml")
+async def social_rss_feed(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """RSS feed for curated top social stories (HN + Reddit)."""
+    stories = await _load_social_stories(session, limit=40)
+    xml = _build_social_rss_xml(
+        stories,
+        str(request.base_url).rstrip("/") + "/social",
+    )
+    return Response(content=xml, media_type="application/rss+xml")
 
 
 @app.post("/feedback")
