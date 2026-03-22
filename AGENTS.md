@@ -89,3 +89,7 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversat
 - **Don't pass `timeout` as kwarg to `llm.completion()`** — causes "multiple values for keyword argument" error
 - **Web version for beehiiv newsletters** — `web_version.py` fetches cleaner web page via constructed URL (beehiiv redirects blocked by Cloudflare in GHA). Maps sender domain → base URL in `_SENDER_WEB_PATTERNS`
 - **Neon DB connection drops** after ~5 min idle — if LLM takes >5 min, the DB session dies. `pool_pre_ping` only helps at checkout, not during a long-running transaction. Keep LLM processing under 5 min total
+- **RSS endpoint:** `GET /rss.xml` now emits RSS 2.0 from the same ranked story selection as `/`; supports optional `tag` and `starred` query params
+- **Social top-stories pipeline:** `scripts/run_social_pipeline.py` ingests HN + curated Reddit, applies dynamic thresholds + diversity caps, upserts into `social_stories`, and prunes by age/count guardrails (`RETENTION_DAYS`, `MAX_STORED_ROWS`) to stay Neon free-tier friendly
+- **Social RSS endpoint:** `GET /social/rss.xml` publishes the curated social feed from `social_stories`
+- **Social scheduler:** `.github/workflows/social_pipeline.yml` triggers OpenHands Cloud every 2 hours via `scripts/openhands_trigger_social.py`

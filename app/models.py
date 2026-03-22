@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -164,3 +164,31 @@ class Digest(Base):
     story_count: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String, default="pending")  # pending, sent, failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
+
+
+class SocialStory(Base):
+    __tablename__ = "social_stories"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source: Mapped[str] = mapped_column(String, nullable=False)  # hacker_news, reddit
+    community: Mapped[str] = mapped_column(String, nullable=False)  # frontpage, MachineLearning, etc.
+    external_id: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(Text)
+    permalink: Mapped[str | None] = mapped_column(Text)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    comment_count: Mapped[int] = mapped_column(Integer, default=0)
+    upvote_ratio: Mapped[float | None] = mapped_column(Float)
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), default=list)
+    rank_score: Mapped[float | None] = mapped_column(Float)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
+    source_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_social_stories_source_external"),
+        Index("idx_social_stories_fetched_at", fetched_at.desc()),
+        Index("idx_social_stories_source_created", "source", source_created_at.desc()),
+    )
+
