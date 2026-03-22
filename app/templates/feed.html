@@ -6,7 +6,11 @@
 <div class="feed-header">
     <h1>{% if show_starred %}⭐ Saved Stories{% elif active_tag %}#{{ active_tag }}{% else %}Today's Feed{% endif %}</h1>
     {% if last_updated %}
-    <p><small>Last updated: {{ last_updated.strftime('%I:%M %p UTC') }} · Stories expire after 7 days unless starred</small></p>
+    <p>
+        <small>Last updated: {{ last_updated.strftime('%I:%M %p UTC') }} · Stories expire after 7 days unless starred</small>
+        <span style="margin-left: 10px;">•</span>
+        <small><a href="/social/rss.xml" target="_blank">📡 Social Top Stories RSS</a></small>
+    </p>
     {% endif %}
 </div>
 
