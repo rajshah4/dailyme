@@ -175,12 +175,16 @@ async def _fetch_reddit_community_candidates(
     top_url = f"https://www.reddit.com/r/{community}/top.json?t=month&limit={REDDIT_TOP_LIMIT}"
     hot_url = f"https://www.reddit.com/r/{community}/hot.json?limit={REDDIT_HOT_LIMIT}"
 
-    top_resp, hot_resp = await asyncio.gather(
-        client.get(top_url, timeout=30),
-        client.get(hot_url, timeout=30),
-    )
-    top_resp.raise_for_status()
-    hot_resp.raise_for_status()
+    try:
+        top_resp, hot_resp = await asyncio.gather(
+            client.get(top_url, timeout=30),
+            client.get(hot_url, timeout=30),
+        )
+        top_resp.raise_for_status()
+        hot_resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("Reddit r/%s unavailable (%s) — skipping", community, exc)
+        return []
 
     top_children = (((top_resp.json() or {}).get("data") or {}).get("children") or [])
     hot_children = (((hot_resp.json() or {}).get("data") or {}).get("children") or [])
@@ -359,10 +363,17 @@ async def run_social_pipeline() -> dict[str, int]:
 
     headers = {"User-Agent": os.getenv("SOCIAL_USER_AGENT", USER_AGENT)}
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-        hn, reddit = await asyncio.gather(
+        results = await asyncio.gather(
             _fetch_hn_candidates(client),
             _fetch_reddit_candidates(client),
+            return_exceptions=True,
         )
+        hn = results[0] if not isinstance(results[0], BaseException) else []
+        reddit = results[1] if not isinstance(results[1], BaseException) else []
+        if isinstance(results[0], BaseException):
+            logger.warning("HN fetch failed: %s", results[0])
+        if isinstance(results[1], BaseException):
+            logger.warning("Reddit fetch failed entirely: %s", results[1])
 
     combined = _dedupe_candidates(hn + reddit)
     selected = _pick_top(combined)
