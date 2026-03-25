@@ -1,5 +1,9 @@
 # DailyMe — Agent Memory
 
+## Agent Operating Rules
+- **Always push after committing** — This project runs on GitHub Actions cron jobs. A local commit is invisible to the automated pipelines. Every fix must end with `git push origin main` or it has not actually been deployed.
+- **Confirm changes are live** — After pushing, tell the user: what was changed, what commit was made, and confirm it was pushed to remote. Don't assume they can see what happened.
+
 ## Project Overview
 - **What:** Personalized AI news aggregator from forwarded email newsletters + Social Top Stories (HN/Reddit)
 - **Goal:** Demo app showing OpenHands coding agents running continuously as operators
@@ -98,3 +102,4 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversat
 - **Social top-stories pipeline:** `scripts/run_social_pipeline.py` ingests HN + curated Reddit, applies dynamic thresholds + diversity caps, upserts into `social_stories`, and prunes by age/count guardrails (`RETENTION_DAYS`, `MAX_STORED_ROWS`) to stay Neon free-tier friendly
 - **Social RSS endpoint:** `GET /social/rss.xml` publishes the curated social feed from `social_stories`
 - **Social scheduler:** `.github/workflows/social_pipeline.yml` triggers OpenHands Cloud every 2 hours via `scripts/openhands_trigger_social.py`
+- **Reddit 403 in cloud/dev environments** — Reddit blocks JSON API requests from data-center IPs with 403. `_fetch_reddit_community_candidates` handles this gracefully (try/except → returns `[]` + warning log). Top-level gather uses `return_exceptions=True` so HN still runs. Fix is in place as of commit `778815b`.
