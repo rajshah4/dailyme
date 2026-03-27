@@ -359,7 +359,7 @@ async def extract_stories(
             "  Calling OpenHands V1 conversation API (%s) for story extraction...",
             client.model or "default",
         )
-        raw = _strip_markdown_fences(await client.extract_json(prompt))
+        raw = _extract_json_array(await client.extract_json(prompt))
 
         stories_data = json.loads(raw)
         if not isinstance(stories_data, list):
@@ -397,6 +397,45 @@ def _strip_markdown_fences(raw: str) -> str:
             raw = raw[:-3]
         raw = raw.strip()
     return raw
+
+
+def _extract_json_array(raw: str) -> str:
+    """Extract the JSON array from a potentially noisy LLM response.
+
+    Handles: markdown fences, trailing explanation text, leading preamble.
+    Falls back to the original string if no array bracket is found.
+    """
+    raw = _strip_markdown_fences(raw)
+    start = raw.find("[")
+    if start == -1:
+        return raw
+    # Walk from the end to find the matching closing bracket
+    depth = 0
+    end = -1
+    in_str = False
+    escape_next = False
+    for i, ch in enumerate(raw[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_str:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end == -1:
+        return raw
+    return raw[start : end + 1]
 
 
 _BLOCK_TAGS = {
