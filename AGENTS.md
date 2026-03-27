@@ -97,7 +97,9 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversat
 - **asyncio.wait_for(300s)** wraps `segment_newsletter()` as backup timeout, but won't cancel sync LLM calls mid-flight
 - **Don't pass `timeout` as kwarg to `llm.completion()`** — causes "multiple values for keyword argument" error
 - **Web version for beehiiv newsletters** — `web_version.py` fetches cleaner web page via constructed URL (beehiiv redirects blocked by Cloudflare in GHA). Maps sender domain → base URL in `_SENDER_WEB_PATTERNS`
-- **Neon DB connection drops** after ~5 min idle — if LLM takes >5 min, the DB session dies. `pool_pre_ping` only helps at checkout, not during a long-running transaction. Keep LLM processing under 5 min total
+- **Neon DB connection drops** after ~5 min idle — if LLM takes >5 min, the DB session dies. `pool_pre_ping` only helps at checkout, not during a long-running transaction. **Fix:** close DB session before calling LLM, open a fresh session after LLM returns. Pattern: `fetch data → dispose engine → run LLM → create new engine → save results`.
+- **AINews newsletters take 10+ min** for LLM extraction via V1 API — set `OPENHANDS_RUN_TIMEOUT=600` when running locally/manually. Default 180s is too short. GHA workflow already inherits env from secrets.
+- **Pipeline idempotency check** is on `gmail_id` existence in `raw_emails`, NOT on `parsed` flag — resetting `parsed=False` does NOT cause the main pipeline to re-process an email. Use a direct reparse script to retry failed extractions.
 - **RSS endpoint:** `GET /rss.xml` now emits RSS 2.0 from the same ranked story selection as `/`; supports optional `tag` and `starred` query params
 - **Social top-stories pipeline:** `scripts/run_social_pipeline.py` ingests HN + curated Reddit, applies dynamic thresholds + diversity caps, upserts into `social_stories`, and prunes by age/count guardrails (`RETENTION_DAYS`, `MAX_STORED_ROWS`) to stay Neon free-tier friendly
 - **Social RSS endpoint:** `GET /social/rss.xml` publishes the curated social feed from `social_stories`
