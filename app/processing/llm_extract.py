@@ -67,7 +67,7 @@ Newsletter content:
 {content}
 """
 
-MAX_CONTENT_LENGTH = 40000  # Reduced to handle large newsletters without timing out
+MAX_CONTENT_LENGTH = 20000  # Keep prompt small; V1 conversation times out for large inputs
 
 DEFAULT_OPENHANDS_BASE_URL = "https://app.all-hands.dev"
 DEFAULT_START_TIMEOUT_SECONDS = 120
