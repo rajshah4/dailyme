@@ -210,12 +210,34 @@ class OpenHandsV1Client:
         conversation_id: str,
     ) -> dict:
         deadline = time.monotonic() + self.run_timeout_seconds
+        consecutive_errors = 0
+        max_consecutive_errors = 5
         while time.monotonic() < deadline:
-            response = await client.get(
-                "/api/v1/app-conversations",
-                params={"ids": conversation_id},
-            )
-            response.raise_for_status()
+            try:
+                response = await client.get(
+                    "/api/v1/app-conversations",
+                    params={"ids": conversation_id},
+                )
+                response.raise_for_status()
+                consecutive_errors = 0
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code >= 500:
+                    consecutive_errors += 1
+                    logger.warning(
+                        "  Poll got %s (attempt %d/%d), retrying...",
+                        exc.response.status_code,
+                        consecutive_errors,
+                        max_consecutive_errors,
+                    )
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise RuntimeError(
+                            f"OpenHands API returned {exc.response.status_code} "
+                            f"{max_consecutive_errors} times in a row"
+                        ) from exc
+                    await asyncio.sleep(self.poll_interval_seconds * 5)
+                    continue
+                raise
+
             conversations = response.json()
             conversation = conversations[0] if conversations else None
             if not conversation:
