@@ -1,7 +1,7 @@
 # DailyMe — Agent Memory
 
 ## Agent Operating Rules
-- **Always push after committing** — This project runs on GitHub Actions cron jobs. A local commit is invisible to the automated pipelines. Every fix must end with `git push origin main` or it has not actually been deployed.
+- **Always push after committing** — This project's pipelines are triggered by OpenHands Automations (cron). A local commit is invisible until pushed. Every fix must end with `git push origin main` or it has not actually been deployed.
 - **Confirm changes are live** — After pushing, tell the user: what was changed, what commit was made, and confirm it was pushed to remote. Don't assume they can see what happened.
 
 ## Project Overview
@@ -12,8 +12,10 @@
 ## Key Architecture
 - **Pipeline:** `scripts/run_pipeline.py` — fetches Gmail → LLM extracts stories → dedup → store
 - **Social Pipeline:** `scripts/run_social_pipeline.py` — fetches HN/Reddit → dynamic thresholding → store
-- **Pipeline scheduling:** GitHub Actions cron (every 30 min) — see `.github/workflows/pipeline.yml`
-- **Social scheduling:** GitHub Actions cron (every 2 hours) — see `.github/workflows/social_pipeline.yml`
+- **Pipeline scheduling:** OpenHands Automations cron (every 2h) — ID `5fbefeb3-9f35-459e-8b5c-54959be03cb0`
+- **Social scheduling:** OpenHands Automations cron (every 2h) — ID `2129c579-8fb7-4562-9024-6b16af843b6c`
+- **Status check:** `uv run python scripts/check_automations.py`
+- **GitHub Actions** (`.github/workflows/`) — cron disabled, `workflow_dispatch` kept for manual one-off triggers
 - **Web app:** FastAPI + Jinja2 on Railway — reads from Postgres, renders feed
 - **Database:** Neon Postgres with pgvector
 
@@ -39,9 +41,9 @@
   - **Repo:** `rajiv-shah-website-private` (separate Next.js repo)
   - **Social RSS:** Endpoint `/news/social-rss.xml` is served by Next.js app, reading `social_stories` table
   - **FastAPI UI:** (This repo) serves as a fallback/dev UI and API backend at `https://dailyme-production.up.railway.app` (or similar)
-- **Pipeline:** OpenHands Cloud triggered by GitHub Actions every 30 min
-  - Trigger: `.github/workflows/pipeline.yml` (just API call, ~5 sec)
-  - Compute: OpenHands Cloud (fetches Gmail, parses with LLM, dedup, store)
+- **Pipeline:** OpenHands Automations cron every 2h (ID `5fbefeb3-9f35-459e-8b5c-54959be03cb0`)
+  - Check status: `uv run python scripts/check_automations.py`
+  - Manual trigger: `gh workflow run pipeline.yml` (GitHub Actions workflow_dispatch still works)
   - See `OPENHANDS_CLOUD_SETUP.md` for full details
 - **DB:** Neon Postgres — ep-delicate-moon-aiqylnhh.c-4.us-east-1.aws.neon.tech
 - **GitHub secrets:** OPENHANDS_API_KEY, OH_API_KEY, DATABASE_URL, GMAIL_TOKEN_JSON
@@ -51,7 +53,7 @@
 - **6 newsletters in Gmail DailyMe label**
 - **71 stories in feed** from AINews, Import AI, The Rundown AI, Cobus Greyling, and others
 - **Social feed live** at `/news/social-rss.xml` (Next.js) and `/social/rss.xml` (FastAPI)
-- **Pipeline stable** — GitHub Actions cron running green every 30 min
+- **Pipeline stable** — OpenHands Automations running every 2h
 - **The Rundown AI:** Now uses web version (14K chars vs 35K email) via constructed URL fallback; extracts 12 stories in ~3.5 min
 
 ## .env Configuration
@@ -76,7 +78,7 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversat
 - `app/processing/ranker.py` — Scoring: recency + coverage + interest + position
 - `app/templates/feed.html` — Feed UI with tag filter bar, star, thumbs up/down
 - `scripts/run_pipeline.py` — Full pipeline: Gmail → parse → dedup → store
-- `.github/workflows/pipeline.yml` — GitHub Actions cron (every 30 min)
+- `.github/workflows/pipeline.yml` — manual trigger only (cron moved to OpenHands Automations)
 
 ## Build & Run Commands
 - `uv sync` — install all dependencies
@@ -104,5 +106,5 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversat
 - **RSS endpoint:** `GET /rss.xml` now emits RSS 2.0 from the same ranked story selection as `/`; supports optional `tag` and `starred` query params
 - **Social top-stories pipeline:** `scripts/run_social_pipeline.py` ingests HN + curated Reddit, applies dynamic thresholds + diversity caps, upserts into `social_stories`, and prunes by age/count guardrails (`RETENTION_DAYS`, `MAX_STORED_ROWS`) to stay Neon free-tier friendly
 - **Social RSS endpoint:** `GET /social/rss.xml` publishes the curated social feed from `social_stories`
-- **Social scheduler:** `.github/workflows/social_pipeline.yml` triggers OpenHands Cloud every 2 hours via `scripts/openhands_trigger_social.py`
+- **Social scheduler:** OpenHands Automations cron every 2h (ID `2129c579-8fb7-4562-9024-6b16af843b6c`); `.github/workflows/social_pipeline.yml` kept for manual dispatch only
 - **Reddit 403 in cloud/dev environments** — Reddit blocks JSON API requests from data-center IPs with 403. `_fetch_reddit_community_candidates` handles this gracefully (try/except → returns `[]` + warning log). Top-level gather uses `return_exceptions=True` so HN still runs. Fix is in place as of commit `778815b`.

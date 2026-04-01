@@ -1,10 +1,7 @@
 name: Trigger Social Pipeline (OpenHands Cloud)
 
 on:
-  schedule:
-    # Every 2 hours
-    - cron: '0 */2 * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Manual trigger only — scheduling handled by OpenHands Automations
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

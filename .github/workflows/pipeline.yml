@@ -1,10 +1,7 @@
 name: Trigger Pipeline (OpenHands Cloud)
 
 on:
-  schedule:
-    # Every 2 hours
-    - cron: '0 */2 * * *'
-  workflow_dispatch: # Manual trigger
+  workflow_dispatch: # Manual trigger only — scheduling handled by OpenHands Automations
 
 jobs:
   trigger:
