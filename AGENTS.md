@@ -23,7 +23,7 @@
 - **LLM Extraction:** OpenHands Cloud LLM (`openhands/claude-sonnet-4-5-20250929`) via SDK
 - **HTML→Text:** `_html_to_readable()` extracts leaf block elements only (skips containers to avoid 62K collapsed lines)
 - **URL Resolution:** Substack redirect URLs followed via HTTP HEAD to get real destinations (tweet URLs, etc.)
-- **Content limit:** 80K chars to LLM (AINews is ~82K readable)
+- **Content limit:** 20K chars to LLM — `MAX_CONTENT_LENGTH=20000` in `llm_extract.py` (AINews has ~87K readable; at 40K the V1 conversation hits 20+ min and 500 errors; at 20K it completes in ~5 min)
 - **Dedup:** URL canonicalization + title Jaccard similarity
 - **Content Tags:** Rule-based: long_form, research, launch, funding, vendor, podcast, tutorial, benchmark
 - **Frontend:** Server-rendered HTML with Pico CSS
@@ -98,8 +98,9 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversat
 - **Don't pass `timeout` as kwarg to `llm.completion()`** — causes "multiple values for keyword argument" error
 - **Web version for beehiiv newsletters** — `web_version.py` fetches cleaner web page via constructed URL (beehiiv redirects blocked by Cloudflare in GHA). Maps sender domain → base URL in `_SENDER_WEB_PATTERNS`
 - **Neon DB connection drops** after ~5 min idle — if LLM takes >5 min, the DB session dies. `pool_pre_ping` only helps at checkout, not during a long-running transaction. **Fix:** close DB session before calling LLM, open a fresh session after LLM returns. Pattern: `fetch data → dispose engine → run LLM → create new engine → save results`.
-- **AINews newsletters take 10+ min** for LLM extraction via V1 API — set `OPENHANDS_RUN_TIMEOUT=600` when running locally/manually. Default 180s is too short. GHA workflow already inherits env from secrets.
+- **AINews newsletters take ~5 min** for LLM extraction via V1 API with `MAX_CONTENT_LENGTH=20000` — set `OPENHANDS_RUN_TIMEOUT=600` when running locally/manually. Default 180s is too short. GHA workflow already inherits env from secrets. At the old 40K limit it took 20+ min and hit server 500 errors.
 - **Pipeline idempotency check** is on `gmail_id` existence in `raw_emails`, NOT on `parsed` flag — resetting `parsed=False` does NOT cause the main pipeline to re-process an email. Use a direct reparse script to retry failed extractions.
+- **V1 poll 5xx retry** — `_wait_for_conversation` retries up to 5× on 5xx errors (with 10s back-off) before failing. This handles transient server errors during long-running conversations.
 - **RSS endpoint:** `GET /rss.xml` now emits RSS 2.0 from the same ranked story selection as `/`; supports optional `tag` and `starred` query params
 - **Social top-stories pipeline:** `scripts/run_social_pipeline.py` ingests HN + curated Reddit, applies dynamic thresholds + diversity caps, upserts into `social_stories`, and prunes by age/count guardrails (`RETENTION_DAYS`, `MAX_STORED_ROWS`) to stay Neon free-tier friendly
 - **Social RSS endpoint:** `GET /social/rss.xml` publishes the curated social feed from `social_stories`
