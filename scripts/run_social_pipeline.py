@@ -10,10 +10,13 @@ Design goals:
 """
 
 import asyncio
+import html as html_lib
 import logging
 import math
 import os
+import re
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -196,16 +199,94 @@ async def _fetch_hn_candidates(client: httpx.AsyncClient) -> list[Candidate]:
     return candidates
 
 
+def _parse_reddit_rss_entries(rss_text: str, community: str) -> list[Candidate]:
+    """Parse Reddit Atom RSS feed into Candidate objects with synthetic rank-based scores."""
+    NS_A = "http://www.w3.org/2005/Atom"
+    try:
+        root = ET.fromstring(rss_text)
+    except ET.ParseError as exc:
+        logger.warning("Reddit r/%s RSS parse error: %s", community, exc)
+        return []
+
+    candidates: list[Candidate] = []
+    for rank, entry in enumerate(root.findall(f"{{{NS_A}}}entry")):
+        id_el      = entry.find(f"{{{NS_A}}}id")
+        title_el   = entry.find(f"{{{NS_A}}}title")
+        link_el    = entry.find(f"{{{NS_A}}}link")
+        pub_el     = entry.find(f"{{{NS_A}}}published")
+        content_el = entry.find(f"{{{NS_A}}}content")
+
+        raw_id = (id_el.text or "").strip() if id_el is not None else ""
+        external_id = raw_id.replace("t3_", "") if raw_id.startswith("t3_") else raw_id
+        if not external_id:
+            continue
+
+        title = (title_el.text or "").strip() if title_el is not None else ""
+        if not title:
+            continue
+
+        permalink = link_el.get("href", "") if link_el is not None else ""
+        created_at = _safe_dt(None)
+        if pub_el is not None and pub_el.text:
+            try:
+                created_at = datetime.fromisoformat(pub_el.text)
+            except ValueError:
+                pass
+
+        # Extract external article URL from content HTML (first non-reddit href)
+        post_url: str | None = None
+        if content_el is not None and content_el.text:
+            content_html = html_lib.unescape(content_el.text)
+            hrefs = re.findall(r'href="([^"]+)"', content_html)
+            post_url = next(
+                (u for u in hrefs if "reddit.com" not in u and "redd.it" not in u and u.startswith("http")),
+                None,
+            )
+
+        # Synthetic score: first RSS entry (highest upvoted) = 100, decreasing by rank
+        synthetic_score = max(0, 100 - rank)
+
+        candidates.append(Candidate(
+            source=REDDIT_SOURCE,
+            community=community,
+            external_id=external_id,
+            title=title,
+            url=post_url or permalink,
+            permalink=permalink,
+            score=synthetic_score,
+            comment_count=0,  # not available in RSS
+            upvote_ratio=None,
+            source_created_at=created_at,
+            tags=["source:reddit", f"community:{community}"],
+        ))
+
+    return candidates
+
+
 async def _fetch_reddit_community_candidates(
     client: httpx.AsyncClient,
     community: str,
     token: str | None = None,
 ) -> list[Candidate]:
-    # Use the OAuth endpoint (bypasses IP-based blocks) when a token is available
-    base = "https://oauth.reddit.com" if token else "https://www.reddit.com"
-    top_url = f"{base}/r/{community}/top.json?t=month&limit={REDDIT_TOP_LIMIT}"
-    hot_url = f"{base}/r/{community}/hot.json?limit={REDDIT_HOT_LIMIT}"
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    """Fetch Reddit community candidates.
+
+    With an OAuth token → uses oauth.reddit.com JSON API (full score data).
+    Without a token    → uses public RSS feed (no credentials, no IP blocks).
+    """
+    if token:
+        return await _fetch_reddit_community_json(client, community, token)
+    return await _fetch_reddit_community_rss(client, community)
+
+
+async def _fetch_reddit_community_json(
+    client: httpx.AsyncClient,
+    community: str,
+    token: str,
+) -> list[Candidate]:
+    """Fetch via authenticated JSON API (oauth.reddit.com) — full score data."""
+    top_url = f"https://oauth.reddit.com/r/{community}/top.json?t=month&limit={REDDIT_TOP_LIMIT}"
+    hot_url = f"https://oauth.reddit.com/r/{community}/hot.json?limit={REDDIT_HOT_LIMIT}"
+    headers = {"Authorization": f"Bearer {token}"}
 
     try:
         top_resp, hot_resp = await asyncio.gather(
@@ -215,8 +296,8 @@ async def _fetch_reddit_community_candidates(
         top_resp.raise_for_status()
         hot_resp.raise_for_status()
     except Exception as exc:
-        logger.warning("Reddit r/%s unavailable (%s) — skipping", community, exc)
-        return []
+        logger.warning("Reddit r/%s JSON (OAuth) unavailable (%s) — falling back to RSS", community, exc)
+        return await _fetch_reddit_community_rss(client, community)
 
     top_children = (((top_resp.json() or {}).get("data") or {}).get("children") or [])
     hot_children = (((hot_resp.json() or {}).get("data") or {}).get("children") or [])
@@ -231,39 +312,47 @@ async def _fetch_reddit_community_candidates(
         external_id = str(data.get("id") or "").strip()
         if not external_id:
             continue
-
         score = int(data.get("score") or 0)
         if score < threshold:
             continue
-
         title = (data.get("title") or "").strip()
-        if not title:
+        if not title or int(data.get("num_comments") or 0) < 3:
             continue
-
-        permalink = f"https://www.reddit.com{data.get('permalink', '')}"
-        post_url = data.get("url")
-        created_at = _safe_dt(data.get("created_utc"))
-
-        # Optional lightweight quality floor
-        if int(data.get("num_comments") or 0) < 3:
-            continue
-
         candidates.append(Candidate(
             source=REDDIT_SOURCE,
             community=community,
             external_id=external_id,
             title=title,
-            url=post_url,
-            permalink=permalink,
+            url=data.get("url"),
+            permalink=f"https://www.reddit.com{data.get('permalink', '')}",
             score=score,
             comment_count=int(data.get("num_comments") or 0),
             upvote_ratio=float(data.get("upvote_ratio")) if data.get("upvote_ratio") is not None else None,
-            source_created_at=created_at,
+            source_created_at=_safe_dt(data.get("created_utc")),
             tags=["source:reddit", f"community:{community}"],
-            summary=data.get("selftext")[:1000] if data.get("selftext") else None,  # First 1000 chars
+            summary=data.get("selftext")[:1000] if data.get("selftext") else None,
         ))
 
-    logger.info("Reddit r/%s candidates above threshold (%s): %s", community, threshold, len(candidates))
+    logger.info("Reddit r/%s JSON candidates above threshold (%s): %s", community, threshold, len(candidates))
+    return candidates
+
+
+async def _fetch_reddit_community_rss(
+    client: httpx.AsyncClient,
+    community: str,
+) -> list[Candidate]:
+    """Fetch via public RSS feed — no credentials required, bypasses IP blocks."""
+    # top.rss already sorted by score; use it as both threshold-sampler and candidates
+    top_url = f"https://www.reddit.com/r/{community}/top.rss?t=month&limit={REDDIT_TOP_LIMIT}"
+    try:
+        resp = await client.get(top_url, timeout=30)
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("Reddit r/%s RSS unavailable (%s) — skipping", community, exc)
+        return []
+
+    candidates = _parse_reddit_rss_entries(resp.text, community)
+    logger.info("Reddit r/%s RSS candidates: %s", community, len(candidates))
     return candidates
 
 
