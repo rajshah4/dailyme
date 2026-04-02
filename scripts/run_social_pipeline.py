@@ -58,6 +58,34 @@ REDDIT_HOT_LIMIT = 100
 USER_AGENT = "dailyme-social/1.0"
 
 
+async def _get_reddit_oauth_token(client: httpx.AsyncClient) -> str | None:
+    """Obtain a Reddit OAuth2 Bearer token via client_credentials flow.
+
+    Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET env vars (from a Reddit
+    "script" or "web" app created at https://www.reddit.com/prefs/apps).
+    Returns None if credentials are not configured or the request fails.
+    """
+    client_id = os.getenv("REDDIT_CLIENT_ID", "").strip()
+    client_secret = os.getenv("REDDIT_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        logger.debug("REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET not set — using anonymous Reddit access")
+        return None
+    try:
+        resp = await client.post(
+            "https://www.reddit.com/api/v1/access_token",
+            data={"grant_type": "client_credentials"},
+            auth=(client_id, client_secret),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        token = resp.json().get("access_token")
+        logger.info("Reddit OAuth2 token obtained (expires_in=%s s)", resp.json().get("expires_in"))
+        return token
+    except Exception as exc:
+        logger.warning("Failed to obtain Reddit OAuth2 token (%s) — falling back to anonymous", exc)
+        return None
+
+
 @dataclass(slots=True)
 class Candidate:
     source: str
@@ -171,14 +199,18 @@ async def _fetch_hn_candidates(client: httpx.AsyncClient) -> list[Candidate]:
 async def _fetch_reddit_community_candidates(
     client: httpx.AsyncClient,
     community: str,
+    token: str | None = None,
 ) -> list[Candidate]:
-    top_url = f"https://www.reddit.com/r/{community}/top.json?t=month&limit={REDDIT_TOP_LIMIT}"
-    hot_url = f"https://www.reddit.com/r/{community}/hot.json?limit={REDDIT_HOT_LIMIT}"
+    # Use the OAuth endpoint (bypasses IP-based blocks) when a token is available
+    base = "https://oauth.reddit.com" if token else "https://www.reddit.com"
+    top_url = f"{base}/r/{community}/top.json?t=month&limit={REDDIT_TOP_LIMIT}"
+    hot_url = f"{base}/r/{community}/hot.json?limit={REDDIT_HOT_LIMIT}"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     try:
         top_resp, hot_resp = await asyncio.gather(
-            client.get(top_url, timeout=30),
-            client.get(hot_url, timeout=30),
+            client.get(top_url, headers=headers, timeout=30),
+            client.get(hot_url, headers=headers, timeout=30),
         )
         top_resp.raise_for_status()
         hot_resp.raise_for_status()
@@ -235,9 +267,9 @@ async def _fetch_reddit_community_candidates(
     return candidates
 
 
-async def _fetch_reddit_candidates(client: httpx.AsyncClient) -> list[Candidate]:
+async def _fetch_reddit_candidates(client: httpx.AsyncClient, token: str | None = None) -> list[Candidate]:
     batches = await asyncio.gather(*[
-        _fetch_reddit_community_candidates(client, community)
+        _fetch_reddit_community_candidates(client, community, token=token)
         for community in REDDIT_COMMUNITIES
     ])
     return [item for batch in batches for item in batch]
@@ -363,9 +395,15 @@ async def run_social_pipeline() -> dict[str, int]:
 
     headers = {"User-Agent": os.getenv("SOCIAL_USER_AGENT", USER_AGENT)}
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+        reddit_token = await _get_reddit_oauth_token(client)
+        if reddit_token:
+            logger.info("Using Reddit OAuth2 — requests routed to oauth.reddit.com")
+        else:
+            logger.info("No Reddit OAuth2 credentials — using anonymous access (may hit 403)")
+
         results = await asyncio.gather(
             _fetch_hn_candidates(client),
-            _fetch_reddit_candidates(client),
+            _fetch_reddit_candidates(client, token=reddit_token),
             return_exceptions=True,
         )
         hn = results[0] if not isinstance(results[0], BaseException) else []
