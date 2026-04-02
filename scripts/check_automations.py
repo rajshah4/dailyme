@@ -10,8 +10,18 @@ import argparse
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
+
+# Auto-load .env from project root (two levels up from this script)
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip())
 
 AUTOMATIONS = {
     "Newsletter Pipeline": "5fbefeb3-9f35-459e-8b5c-54959be03cb0",
