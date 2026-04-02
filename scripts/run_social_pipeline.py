@@ -3,6 +3,12 @@
 Runs independently from newsletter ingestion and stores a compact set of curated
 social stories for RSS publication.
 
+Reddit fetching strategy (two paths, auto-selected):
+  - No credentials: fetches www.reddit.com/r/*/top.rss (Atom feed, no auth,
+    works from cloud IPs). Score is synthetic/rank-based.
+  - REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET set: fetches oauth.reddit.com JSON
+    API for real upvote scores. Falls back to RSS on failure.
+
 Design goals:
 - Keep storage lightweight for Neon free tier (<150MB by wide margin)
 - Deterministic top-story selection with controllable volume
@@ -71,7 +77,7 @@ async def _get_reddit_oauth_token(client: httpx.AsyncClient) -> str | None:
     client_id = os.getenv("REDDIT_CLIENT_ID", "").strip()
     client_secret = os.getenv("REDDIT_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
-        logger.debug("REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET not set — using anonymous Reddit access")
+        logger.debug("REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET not set — will use RSS feed")
         return None
     try:
         resp = await client.post(
@@ -85,7 +91,7 @@ async def _get_reddit_oauth_token(client: httpx.AsyncClient) -> str | None:
         logger.info("Reddit OAuth2 token obtained (expires_in=%s s)", resp.json().get("expires_in"))
         return token
     except Exception as exc:
-        logger.warning("Failed to obtain Reddit OAuth2 token (%s) — falling back to anonymous", exc)
+        logger.warning("Failed to obtain Reddit OAuth2 token (%s) — falling back to RSS feed", exc)
         return None
 
 
@@ -486,9 +492,9 @@ async def run_social_pipeline() -> dict[str, int]:
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
         reddit_token = await _get_reddit_oauth_token(client)
         if reddit_token:
-            logger.info("Using Reddit OAuth2 — requests routed to oauth.reddit.com")
+            logger.info("Reddit: OAuth2 token present — using oauth.reddit.com JSON API")
         else:
-            logger.info("No Reddit OAuth2 credentials — using anonymous access (may hit 403)")
+            logger.info("Reddit: no OAuth2 credentials — using RSS feed (www.reddit.com/r/*/top.rss)")
 
         results = await asyncio.gather(
             _fetch_hn_candidates(client),
