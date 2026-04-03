@@ -24,8 +24,8 @@ if _env_file.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 AUTOMATIONS = {
-    "Newsletter Pipeline": "5fbefeb3-9f35-459e-8b5c-54959be03cb0",
-    "Social Pipeline": "2129c579-8fb7-4562-9024-6b16af843b6c",
+    "Newsletter Pipeline": "8ea1b3be-f1bd-4d8e-8897-5e3faa1adee8",
+    "Social Pipeline": "310007ed-9249-4f6d-abe1-38b7b7fde619",
 }
 
 STATUS_ICONS = {
@@ -99,7 +99,7 @@ def main():
 
         try:
             runs_data = _api(f"/{automation_id}/runs?limit={args.runs}", api_key)
-            runs = runs_data if isinstance(runs_data, list) else runs_data.get("items", [])
+            runs = runs_data if isinstance(runs_data, list) else runs_data.get("runs", [])
         except Exception as e:
             print(f"   ⚠️  Could not fetch runs: {e}")
             runs = []
