@@ -81,12 +81,21 @@ def clean_html(raw_html: str) -> str:
 
 
 def _remove_footer_sections(soup: BeautifulSoup):
-    """Remove footer sections based on content patterns."""
+    """Remove footer sections based on content patterns.
+    
+    Only removes small blocks (< 2000 chars) where footer patterns make up
+    a significant portion of the text. This avoids removing large container
+    elements that happen to include footer text at the bottom.
+    """
     # Walk backwards from the bottom, removing blocks that match footer patterns
     all_blocks = soup.find_all(["div", "table", "tr", "td", "p", "section", "footer"])
     for block in reversed(all_blocks):
         text = block.get_text(strip=True)
         if len(text) < 10:
+            continue
+        # Skip large blocks - they likely contain main content + footer
+        # Only remove small blocks that are primarily footer content
+        if len(text) > 2000:
             continue
         # Check if block matches footer patterns
         matches = sum(1 for p in FOOTER_PATTERNS if p.search(text))
