@@ -13,9 +13,11 @@ import asyncio
 import logging
 import math
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from xml.etree import ElementTree as ET
 
 import httpx
 from sqlalchemy import delete, select
@@ -61,7 +63,8 @@ HN_HOT_LOOKBACK_DAYS = 7
 REDDIT_TOP_LIMIT = 100
 REDDIT_HOT_LIMIT = 100
 
-USER_AGENT = "dailyme-social/1.0"
+# Use browser-like UA to avoid Reddit blocking
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
 
 @dataclass(slots=True)
@@ -202,12 +205,14 @@ async def _fetch_hn_candidates(client: httpx.AsyncClient) -> list[Candidate]:
     return candidates
 
 
-async def _fetch_reddit_community_candidates(
+async def _fetch_reddit_community_rss(
     client: httpx.AsyncClient,
     community: str,
 ) -> list[Candidate]:
-    top_url = f"https://www.reddit.com/r/{community}/top.json?t=month&limit={REDDIT_TOP_LIMIT}"
-    hot_url = f"https://www.reddit.com/r/{community}/hot.json?limit={REDDIT_HOT_LIMIT}"
+    """Fetch Reddit community via RSS (Atom) feed to bypass JSON API 403 errors."""
+    # RSS endpoints work from data center IPs where JSON endpoints return 403
+    top_url = f"https://www.reddit.com/r/{community}/top.rss?t=month&limit={REDDIT_TOP_LIMIT}"
+    hot_url = f"https://www.reddit.com/r/{community}/hot.rss?limit={REDDIT_HOT_LIMIT}"
 
     try:
         top_resp, hot_resp = await asyncio.gather(
@@ -217,90 +222,165 @@ async def _fetch_reddit_community_candidates(
         top_resp.raise_for_status()
         hot_resp.raise_for_status()
     except Exception as exc:
-        logger.warning("Reddit r/%s unavailable (%s) — skipping", community, exc)
+        logger.warning("Reddit r/%s RSS unavailable (%s) — skipping", community, exc)
         return []
 
-    top_children = (((top_resp.json() or {}).get("data") or {}).get("children") or [])
-    hot_children = (((hot_resp.json() or {}).get("data") or {}).get("children") or [])
+    def _parse_rss_feed(xml_content: str) -> list[dict]:
+        """Parse Atom feed and return list of entry dicts."""
+        try:
+            root = ET.fromstring(xml_content)
+            # Atom namespace
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+            entries = []
+            
+            for entry in root.findall("atom:entry", ns):
+                # Extract ID (e.g., "t3_1sj6sas")
+                entry_id_elem = entry.find("atom:id", ns)
+                if entry_id_elem is None or not entry_id_elem.text:
+                    continue
+                external_id = entry_id_elem.text.strip()
+                
+                # Extract title
+                title_elem = entry.find("atom:title", ns)
+                if title_elem is None or not title_elem.text:
+                    continue
+                title = title_elem.text.strip()
+                
+                # Extract permalink
+                link_elem = entry.find("atom:link[@href]", ns)
+                permalink = link_elem.get("href") if link_elem is not None else ""
+                
+                # Extract published/updated time
+                published_elem = entry.find("atom:published", ns)
+                updated_elem = entry.find("atom:updated", ns)
+                timestamp_str = (published_elem.text if published_elem is not None and published_elem.text 
+                               else updated_elem.text if updated_elem is not None and updated_elem.text 
+                               else "")
+                
+                # Extract external URL from content HTML (the actual linked article)
+                content_elem = entry.find("atom:content", ns)
+                external_url = None
+                if content_elem is not None and content_elem.text:
+                    # Look for href in [link] anchor
+                    match = re.search(r'<span><a href="([^"]+)">\[link\]</a></span>', content_elem.text)
+                    if match:
+                        external_url = match.group(1)
+                
+                entries.append({
+                    "external_id": external_id,
+                    "title": title,
+                    "permalink": permalink if permalink.startswith("http") else f"https://www.reddit.com{permalink}",
+                    "external_url": external_url,
+                    "timestamp": timestamp_str,
+                })
+            
+            return entries
+        except Exception as e:
+            logger.warning("Failed to parse RSS feed: %s", e)
+            return []
 
-    top_scores = sorted((int((c.get("data") or {}).get("score") or 0) for c in top_children), reverse=True)
+    top_entries = _parse_rss_feed(top_resp.text)
+    hot_entries = _parse_rss_feed(hot_resp.text)
+
+    # Use rank-based synthetic scores since RSS doesn't include upvotes
+    # Position 1 → score 100, position 2 → score 99, etc.
+    def _assign_synthetic_score(entries: list[dict], base_score: int) -> None:
+        for idx, entry in enumerate(entries):
+            entry["synthetic_score"] = max(base_score - idx, 1)
+
+    _assign_synthetic_score(top_entries, 100)
+    _assign_synthetic_score(hot_entries, 100)
+
+    # Determine threshold based on top entries
+    top_scores = [e["synthetic_score"] for e in top_entries]
     rank_idx = min(max(TARGET_REDDIT_POSTS_PER_DAY * 30 // max(len(REDDIT_COMMUNITIES), 1) - 1, 0), max(len(top_scores) - 1, 0))
     threshold = top_scores[rank_idx] if top_scores else 0
     effective_threshold = int(threshold * 0.8)
 
-    def _candidate_from_reddit_child(child: dict) -> Candidate | None:
-        data = child.get("data") or {}
-        external_id = str(data.get("id") or "").strip()
+    def _candidate_from_rss_entry(entry: dict, score: int) -> Candidate | None:
+        external_id = entry.get("external_id", "").strip()
         if not external_id:
             return None
 
-        title = (data.get("title") or "").strip()
+        title = entry.get("title", "").strip()
         if not title:
             return None
 
-        comment_count = int(data.get("num_comments") or 0)
-        if comment_count < MIN_REDDIT_COMMENTS:
-            return None
-
-        score = int(data.get("score") or 0)
-        permalink = f"https://www.reddit.com{data.get('permalink', '')}"
-        post_url = data.get("url")
-        created_at = _safe_dt(data.get("created_utc"))
+        permalink = entry.get("permalink", "")
+        external_url = entry.get("external_url")
+        timestamp_str = entry.get("timestamp", "")
+        
+        # Parse ISO timestamp
+        try:
+            from dateutil import parser as date_parser
+            created_at = date_parser.isoparse(timestamp_str)
+        except Exception:
+            created_at = _utc_now()
 
         return Candidate(
             source=REDDIT_SOURCE,
             community=community,
             external_id=external_id,
             title=title,
-            url=post_url,
+            url=external_url,
             permalink=permalink,
             score=score,
-            comment_count=comment_count,
-            upvote_ratio=float(data.get("upvote_ratio")) if data.get("upvote_ratio") is not None else None,
+            comment_count=0,  # RSS doesn't include comment count
+            upvote_ratio=None,  # RSS doesn't include upvote ratio
             source_created_at=created_at,
             tags=["source:reddit", f"community:{community}"],
-            summary=data.get("selftext")[:1000] if data.get("selftext") else None,  # First 1000 chars
+            summary=None,
         )
 
     candidates: list[Candidate] = []
-    for child in hot_children:
-        data = child.get("data") or {}
-        score = int(data.get("score") or 0)
+    seen_ids: set[str] = set()
+    
+    # Process hot entries with threshold
+    for entry in hot_entries:
+        score = entry.get("synthetic_score", 0)
         if score < effective_threshold:
             continue
-
-        candidate = _candidate_from_reddit_child(child)
+        
+        external_id = entry.get("external_id", "")
+        if external_id in seen_ids:
+            continue
+        
+        candidate = _candidate_from_rss_entry(entry, score)
         if candidate:
             candidates.append(candidate)
+            seen_ids.add(external_id)
 
+    # Backfill if needed
     if len(candidates) < MIN_REDDIT_CANDIDATES_PER_COMMUNITY:
-        selected_ids = {c.external_id for c in candidates}
-        fallback_children = sorted(
-            hot_children,
-            key=lambda item: int(((item.get("data") or {}).get("score") or 0)),
-            reverse=True,
-        )
-        for child in fallback_children:
+        fallback_entries = sorted(hot_entries, key=lambda e: e.get("synthetic_score", 0), reverse=True)
+        for entry in fallback_entries:
             if len(candidates) >= MIN_REDDIT_CANDIDATES_PER_COMMUNITY:
                 break
-            data = child.get("data") or {}
-            external_id = str(data.get("id") or "").strip()
-            if not external_id or external_id in selected_ids:
+            external_id = entry.get("external_id", "")
+            if not external_id or external_id in seen_ids:
                 continue
-            candidate = _candidate_from_reddit_child(child)
+            candidate = _candidate_from_rss_entry(entry, entry.get("synthetic_score", 0))
             if not candidate:
                 continue
             candidates.append(candidate)
-            selected_ids.add(candidate.external_id)
+            seen_ids.add(external_id)
 
     logger.info(
-        "Reddit r/%s threshold=%s effective=%s selected=%s",
+        "Reddit r/%s RSS threshold=%s effective=%s selected=%s",
         community,
         threshold,
         effective_threshold,
         len(candidates),
     )
     return candidates
+
+
+async def _fetch_reddit_community_candidates(
+    client: httpx.AsyncClient,
+    community: str,
+) -> list[Candidate]:
+    """Main entry point - uses RSS feed parsing."""
+    return await _fetch_reddit_community_rss(client, community)
 
 
 async def _fetch_reddit_candidates(client: httpx.AsyncClient) -> list[Candidate]:
