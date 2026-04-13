@@ -10,6 +10,7 @@ Design goals:
 """
 
 import asyncio
+import html
 import logging
 import math
 import os
@@ -101,6 +102,50 @@ def _domain(url: str | None) -> str | None:
 
         return (urlparse(url).netloc or "").lower()
     except Exception:
+        return None
+
+
+def _clean_html_text(html_text: str, max_length: int = 1000) -> str:
+    """Remove HTML tags, decode entities, and clean up text content."""
+    if not html_text:
+        return ""
+    
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', html_text)
+    
+    # Decode HTML entities
+    text = html.unescape(text)
+    
+    # Filter out navigation links like "[link]", "[comments]"
+    text = re.sub(r'\[(?:link|comments)\]', '', text)
+    
+    # Clean up whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Limit length
+    if len(text) > max_length:
+        text = text[:max_length].rsplit(' ', 1)[0] + '...'
+    
+    return text
+
+
+async def _fetch_hn_post_text(client: httpx.AsyncClient, item_id: str) -> str | None:
+    """Fetch HN post text content via Firebase API for self posts (Ask HN, Show HN, etc.)."""
+    try:
+        url = f"https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
+        resp = await client.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # Get the 'text' field (post body for Ask HN, Show HN, etc.)
+        text_content = data.get("text", "")
+        if not text_content:
+            return None
+        
+        # Clean and limit
+        return _clean_html_text(text_content, max_length=1000)
+    except Exception as e:
+        logger.debug("Failed to fetch HN post text for %s: %s", item_id, e)
         return None
 
 
@@ -202,6 +247,33 @@ async def _fetch_hn_candidates(client: httpx.AsyncClient) -> list[Candidate]:
         effective_threshold,
         len(candidates),
     )
+    
+    # Fetch text content for self posts (Ask HN, Show HN, posts without external URL)
+    self_posts = [c for c in candidates if not c.url]
+    if self_posts:
+        logger.info("Fetching text content for %s HN self posts", len(self_posts))
+        text_tasks = [_fetch_hn_post_text(client, c.external_id) for c in self_posts]
+        text_results = await asyncio.gather(*text_tasks, return_exceptions=True)
+        
+        for candidate, text_content in zip(self_posts, text_results):
+            if isinstance(text_content, str) and text_content:
+                # Update candidate summary (need to create new Candidate since it's frozen)
+                idx = candidates.index(candidate)
+                candidates[idx] = Candidate(
+                    source=candidate.source,
+                    community=candidate.community,
+                    external_id=candidate.external_id,
+                    title=candidate.title,
+                    url=candidate.url,
+                    permalink=candidate.permalink,
+                    score=candidate.score,
+                    comment_count=candidate.comment_count,
+                    upvote_ratio=candidate.upvote_ratio,
+                    source_created_at=candidate.source_created_at,
+                    tags=candidate.tags,
+                    summary=text_content,
+                )
+    
     return candidates
 
 
@@ -257,14 +329,22 @@ async def _fetch_reddit_community_rss(
                                else updated_elem.text if updated_elem is not None and updated_elem.text 
                                else "")
                 
-                # Extract external URL from content HTML (the actual linked article)
+                # Extract external URL and post body from content HTML
                 content_elem = entry.find("atom:content", ns)
                 external_url = None
+                post_body = None
+                
                 if content_elem is not None and content_elem.text:
-                    # Look for href in [link] anchor
-                    match = re.search(r'<span><a href="([^"]+)">\[link\]</a></span>', content_elem.text)
+                    content_html = content_elem.text
+                    
+                    # Look for href in [link] anchor (the actual linked article)
+                    match = re.search(r'<span><a href="([^"]+)">\[link\]</a></span>', content_html)
                     if match:
                         external_url = match.group(1)
+                    
+                    # Extract post body/selftext (the actual post content)
+                    # Reddit RSS includes the post body in the content element as HTML
+                    post_body = _clean_html_text(content_html, max_length=1000)
                 
                 entries.append({
                     "external_id": external_id,
@@ -272,6 +352,7 @@ async def _fetch_reddit_community_rss(
                     "permalink": permalink if permalink.startswith("http") else f"https://www.reddit.com{permalink}",
                     "external_url": external_url,
                     "timestamp": timestamp_str,
+                    "summary": post_body,
                 })
             
             return entries
@@ -309,6 +390,7 @@ async def _fetch_reddit_community_rss(
         permalink = entry.get("permalink", "")
         external_url = entry.get("external_url")
         timestamp_str = entry.get("timestamp", "")
+        summary = entry.get("summary")  # Extract post body content
         
         # Parse ISO timestamp
         try:
@@ -329,7 +411,7 @@ async def _fetch_reddit_community_rss(
             upvote_ratio=None,  # RSS doesn't include upvote ratio
             source_created_at=created_at,
             tags=["source:reddit", f"community:{community}"],
-            summary=None,
+            summary=summary,
         )
 
     candidates: list[Candidate] = []
