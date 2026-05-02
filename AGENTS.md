@@ -12,8 +12,8 @@
 ## Key Architecture
 - **Pipeline:** `scripts/run_pipeline.py` — fetches Gmail → LLM extracts stories → dedup → store
 - **Social Pipeline:** `scripts/run_social_pipeline.py` — fetches HN/Reddit → dynamic thresholding → store
-- **Pipeline scheduling:** OpenHands Automations cron (every 2h) — ID `8ea1b3be-f1bd-4d8e-8897-5e3faa1adee8`
-- **Social scheduling:** OpenHands Automations cron (every 2h) — ID `310007ed-9249-4f6d-abe1-38b7b7fde619`
+- **Pipeline scheduling:** OpenHands Automations cron (every 2h) — ID `431fe8fc-73b8-44bf-b26a-2872a3b5e738`
+- **Social scheduling:** OpenHands Automations cron (every 2h) — ID `4553e2ef-4717-423d-b060-daa1c7f127fe`
 - **Status check:** `uv run python scripts/check_automations.py`
 - **GitHub Actions** (`.github/workflows/`) — cron disabled, `workflow_dispatch` kept for manual one-off triggers
 - **Web app:** FastAPI + Jinja2 on Railway — reads from Postgres, renders feed
@@ -41,7 +41,7 @@
   - **Repo:** `rajiv-shah-website-private` (separate Next.js repo)
   - **Social RSS:** Endpoint `/news/social-rss.xml` is served by Next.js app, reading `social_stories` table
   - **FastAPI UI:** (This repo) serves as a fallback/dev UI and API backend at `https://dailyme-production.up.railway.app` (or similar)
-- **Pipeline:** OpenHands Automations cron every 2h (ID `8ea1b3be-f1bd-4d8e-8897-5e3faa1adee8`)
+- **Pipeline:** OpenHands Automations cron every 2h (ID `431fe8fc-73b8-44bf-b26a-2872a3b5e738`)
   - Check status: `uv run python scripts/check_automations.py`
   - Manual trigger: `gh workflow run pipeline.yml` (GitHub Actions workflow_dispatch still works)
   - See `OPENHANDS_CLOUD_SETUP.md` for full details
@@ -106,7 +106,7 @@ No LLM_BASE_URL needed — SDK auto-routes `openhands/` prefix. For V1 conversat
 - **RSS endpoint:** `GET /rss.xml` now emits RSS 2.0 from the same ranked story selection as `/`; supports optional `tag` and `starred` query params
 - **Social top-stories pipeline:** `scripts/run_social_pipeline.py` ingests HN + curated Reddit, applies dynamic thresholds + diversity caps, upserts into `social_stories`, and prunes by age/count guardrails (`RETENTION_DAYS`, `MAX_STORED_ROWS`) to stay Neon free-tier friendly
 - **Social RSS endpoint:** `GET /social/rss.xml` publishes the curated social feed from `social_stories`
-- **Social scheduler:** OpenHands Automations cron every 2h (ID `310007ed-9249-4f6d-abe1-38b7b7fde619`); `.github/workflows/social_pipeline.yml` kept for manual dispatch only
+- **Social scheduler:** OpenHands Automations cron every 2h (ID `4553e2ef-4717-423d-b060-daa1c7f127fe`); `.github/workflows/social_pipeline.yml` kept for manual dispatch only
 - **Automation API key expiry** — if automations start failing with `401 Unauthorized` on `/api/v1/sandboxes`, the key embedded at creation time has expired. Fix: delete both automations and recreate via `preset/prompt` endpoint using current `OH_API_KEY`. Update IDs in `check_automations.py` and `AGENTS.md` after recreation. The `check_automations.py` runs API response uses key `"runs"` (not `"items"`).
 - **Reddit RSS implementation (FIXED)** — Reddit JSON API (`/r/*/top.json`) returns 403 from data-center IPs. Solution: `_fetch_reddit_community_rss()` fetches Atom RSS feeds (`/r/*/top.rss`, `/r/*/hot.rss`) which bypass IP blocks. Uses browser-like User-Agent (`Mozilla/5.0...`) instead of custom bot UA to avoid blocks. Extracts title/permalink/external-URL/timestamp from XML. Score is synthetic (rank-based: position 1 → 100, position 2 → 99, …) since RSS omits upvote counts. Comment counts set to 0. Successfully tested with all 4 communities (MachineLearning, artificial, LocalLLaMA, OpenAI).
 - **Footer removal size limit** — `_remove_footer_sections()` in `parser.py` skips blocks > 2000 chars. This prevents aggressive removal of entire newsletter content when large container elements (like `<table>`) contain footer text ("View in browser", "Unsubscribe") at the start or end. Without this limit, Substack newsletters were being stripped to empty content (575 bytes → 0 stories).

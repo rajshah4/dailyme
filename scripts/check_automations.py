@@ -24,8 +24,8 @@ if _env_file.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 AUTOMATIONS = {
-    "Newsletter Pipeline": "8ea1b3be-f1bd-4d8e-8897-5e3faa1adee8",
-    "Social Pipeline": "310007ed-9249-4f6d-abe1-38b7b7fde619",
+    "Newsletter Pipeline": "431fe8fc-73b8-44bf-b26a-2872a3b5e738",
+    "Social Pipeline": "4553e2ef-4717-423d-b060-daa1c7f127fe",
 }
 
 STATUS_ICONS = {
