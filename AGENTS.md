@@ -1,5 +1,17 @@
 # DailyMe — Agent Memory
 
+## Hudson Bay Demo (Active Work)
+- **Full setup doc:** `HUDSON_BAY_DEMO.md` — read this before touching anything demo-related
+- **OpenHands Webhook ID:** `6a1e457b-6920-4c00-b641-e6dbef0acfd0` (source: gmail-pubsub)
+- **OpenHands Automation ID:** `aabf8563-f55a-41ab-ad5f-09f0a28718b9` (Trade Confirmation Monitor)
+- **GCP Project:** `dailyme-488917` / number `433110665490`
+- **Pub/Sub topic:** `projects/dailyme-488917/topics/trade-confirmations` *(needs gcloud setup)*
+- **Pub/Sub subscription:** `projects/dailyme-488917/subscriptions/trade-confirmations-push` *(needs gcloud setup)*
+- **Google Sheet:** `1syj7m-Enbt1qpuxlAS5BkmEKQGsoVkLCc8Wek1FvFP8`
+- **Gmail watch:** not yet activated — run `uv run python scripts/activate_gmail_watch.py` after Pub/Sub is set up
+- **OAuth scopes needed:** gmail.readonly + gmail.send + spreadsheets + drive.file (current token is readonly only)
+- **Demo scripts:** `scripts/trade_confirmation_pipeline.py`, `scripts/send_test_trade_email.py`, `scripts/activate_gmail_watch.py`
+
 ## Agent Operating Rules
 - **Always push after committing** — This project's pipelines are triggered by OpenHands Automations (cron). A local commit is invisible until pushed. Every fix must end with `git push origin main` or it has not actually been deployed.
 - **Confirm changes are live** — After pushing, tell the user: what was changed, what commit was made, and confirm it was pushed to remote. Don't assume they can see what happened.
