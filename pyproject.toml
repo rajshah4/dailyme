@@ -31,6 +31,8 @@ dependencies = [
     # HTTP client
     "httpx>=0.28.0",
     "openhands-ai>=1.4.0",
+    "lmnr>=0.7.44",
+    "anthropic>=0.84.0",
 ]
 
 [project.optional-dependencies]
