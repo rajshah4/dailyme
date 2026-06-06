@@ -1119,7 +1119,6 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
-    { name = "anthropic" },
     { name = "apscheduler" },
     { name = "asyncpg" },
     { name = "beautifulsoup4" },
@@ -1129,7 +1128,6 @@ dependencies = [
     { name = "google-auth-oauthlib" },
     { name = "httpx" },
     { name = "jinja2" },
-    { name = "lmnr" },
     { name = "lxml" },
     { name = "markdownify" },
     { name = "openhands-ai" },
@@ -1161,7 +1159,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
-    { name = "anthropic", specifier = ">=0.84.0" },
     { name = "apscheduler", specifier = ">=3.10.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
@@ -1171,7 +1168,6 @@ requires-dist = [
     { name = "google-auth-oauthlib", specifier = ">=1.2.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
-    { name = "lmnr", specifier = ">=0.7.44" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "markdownify", specifier = ">=0.14.0" },
     { name = "openhands-ai", specifier = ">=1.4.0" },
