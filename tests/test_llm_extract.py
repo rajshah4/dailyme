@@ -1,6 +1,23 @@
 """Tests for OpenHands V1 extraction helpers."""
 
-from app.processing.llm_extract import _extract_agent_text_from_events, _strip_markdown_fences
+from app.processing.llm_extract import (
+    DEFAULT_LLM_MODEL,
+    _extract_agent_text_from_events,
+    _get_llm_model,
+    _strip_markdown_fences,
+)
+
+
+def test_get_llm_model_defaults_to_sonnet(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    assert _get_llm_model() == DEFAULT_LLM_MODEL
+
+
+def test_get_llm_model_allows_env_override(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "litellm_proxy/other-model")
+
+    assert _get_llm_model() == "litellm_proxy/other-model"
 
 
 def test_extract_agent_text_from_latest_agent_message():

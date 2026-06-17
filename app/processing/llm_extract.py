@@ -6,7 +6,7 @@ conversation, waits for the agent to finish, reads the final assistant
 message from conversation events, and then deletes the sandbox.
 
 Configuration (via environment or .env):
-  LLM_MODEL                     — e.g. "openhands/claude-sonnet-4-5-20250929"
+  LLM_MODEL                     — optional model override
   LLM_API_KEY                   — OpenHands Cloud API key
   OPENHANDS_BASE_URL            — optional app server base URL
   OPENHANDS_SELECTED_REPOSITORY — optional repo context for the conversation
@@ -69,6 +69,7 @@ Newsletter content:
 
 MAX_CONTENT_LENGTH = 20000  # Keep prompt small; V1 conversation times out for large inputs
 
+DEFAULT_LLM_MODEL = "litellm_proxy/claude-sonnet-4-6"
 DEFAULT_OPENHANDS_BASE_URL = "https://app.all-hands.dev"
 DEFAULT_START_TIMEOUT_SECONDS = 120
 DEFAULT_RUN_TIMEOUT_SECONDS = 180
@@ -91,7 +92,7 @@ class OpenHandsV1Client:
             or os.getenv("LLM_BASE_URL")
             or DEFAULT_OPENHANDS_BASE_URL
         ).rstrip("/")
-        self.model = os.getenv("LLM_MODEL")
+        self.model = _get_llm_model()
         self.selected_repository = os.getenv("OPENHANDS_SELECTED_REPOSITORY")
         self.selected_branch = os.getenv("OPENHANDS_SELECTED_BRANCH")
         self.start_timeout_seconds = int(
@@ -324,6 +325,10 @@ def _get_client() -> OpenHandsV1Client | None:
             candidate.selected_repository,
         )
     return _client
+
+
+def _get_llm_model() -> str:
+    return os.getenv("LLM_MODEL") or DEFAULT_LLM_MODEL
 
 
 def _extract_agent_text_from_events(events: list[dict]) -> str | None:
